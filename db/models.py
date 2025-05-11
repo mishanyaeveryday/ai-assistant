@@ -252,3 +252,157 @@ class UserSubscription_DB:
         """, (subscription_id,))
         conn.commit()
         conn.close()
+
+
+class Command:
+    def __init__(self, id, user_id, command_type, status):
+        self.id = id
+        self.user_id = user_id
+        self.command_type = command_type
+        self.status = status
+        self.result = None
+
+    def set_status(self, status: str):
+        self.status = status
+
+    def set_result(self, result):
+        self.result = result
+
+
+class Command_DB:
+    def __init__(self, db_name='ai-assistent.sqlite3'):
+        self.db_name = db_name
+
+    def connect(self):
+        return sqlite3.connect(self.db_name)
+
+    def create_table(self):
+        conn = self.connect()
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS commands (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                command_type TEXT,
+                status TEXT
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+    def add_command(self, user_id: str, command_type: str, status: str = "waiting", result: str = None):
+        conn = self.connect()
+        cursor = conn.cursor()
+        id = str(uuid.uuid4())
+        cursor.execute("""
+            INSERT INTO commands (id, user_id, command_type, status, result)
+            VALUES (?, ?, ?, ?, ?)
+        """, (id, user_id, command_type, status, result))
+        conn.commit()
+        conn.close()
+
+    def update_command_status(self, id: str, status: str):
+        conn = self.connect()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE commands
+            SET status = ?
+            WHERE id = ?
+        """, (status, id))
+        conn.commit()
+        conn.close()
+
+    def update_command_result(self, id: str, result: str):
+        conn = self.connect()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE commands
+            SET result = ?
+            WHERE id = ?
+        """, (result, id))
+        conn.commit()
+        conn.close()
+
+    def get_command(self, id: str):
+        conn = self.connect()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM commands WHERE id = ?
+        """, (id,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return Command(
+                id=row[0], user_id=row[1], command_type=row[2], status=row[3], result=row[4]
+            )
+        return None
+
+    def get_all_commands(self):
+        conn = self.connect()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM commands
+        """)
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [
+            Command(
+                id=row[0], user_id=row[1], command_type=row[2], status=row[3])
+            for row in rows
+        ]
+
+
+class SubscriptionCommand:
+    def __init__(self, id, subscription_id, command_id, is_enabled):
+        self.id = id
+        self.subscription_id = subscription_id
+        self.command_id = command_id
+        self.is_enabled = is_enabled
+
+
+class SubscriptionCommand_DB:
+    def __init__(self, db_name='ai-assistent.sqlite3'):
+        self.db_name = db_name
+
+    def connect(self):
+        return sqlite3.connect(self.db_name)
+
+    def create_table(self):
+        conn = self.connect()
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS subscription_commands (
+                id TEXT PRIMARY KEY,
+                subscription_id TEXT NOT NULL,
+                command_id TEXT NOT NULL,
+                is_enabled INTEGER
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+    def add_subscription_command(self, subscription_id: str, command_id: str, is_enabled: bool = False):
+        conn = self.connect()
+        cursor = conn.cursor()
+        id = str(uuid.uuid4())
+        cursor.execute("""
+        INSERT INTO subscription_commands (id, subscription_id, command_id, is_enabled) VALUES (?, ?, ?, ?, ?)
+        """, (id, subscription_id, command_id, int(is_enabled)))
+        conn.commit()
+        conn.close()
+
+    def get_commands_by_subscription_id(self, subscription_id):
+        conn = self.connect()
+        cursor = conn.cursor()
+        cursor.execute("""
+        SELECT * FROM subscription_commands WHERE subscription_id = ? AND is_enabled = 1 
+        """, (subscription_id))
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [
+            SubscriptionCommand(
+                id=row[0], subscription_id=row[1], command_id=row[2], is_enabled=bool(row[3]))
+            for row in rows
+        ]
