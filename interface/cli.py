@@ -3,6 +3,7 @@ import sys
 import time
 import threading
 from agent.ai_client import ai_question
+from db.database import Chat_DB, MessageHistory_DB
 
 history = []
 
@@ -19,11 +20,72 @@ def async_print(text, delay=0.009):
     thread.start()
 
 
-print("🤖 AI Assistant started (type 'exit' to quit)\n")
-while True:
-    user_input = input("You: ")
-    if user_input.lower() in ("exit", "quit"):
-        break
-    reply = ai_question(user_input, history)
-    async_print("Assistant: " + reply + "\n")
-    time.sleep(1)
+def ai_assistant(chat_id):
+    print("🤖 AI Assistant started (type 'exit' to quit)\n")
+    msg_db = MessageHistory_DB()
+    message_history = msg_db.get_messages_from_chat(chat_id)
+    history = []
+    for msg in message_history:
+        if msg.input:
+            history.append({'role': 'user', 'content': msg.input})
+        if msg.output:
+            history.append({'role': 'assistant', 'content': msg.output})
+
+    while True:
+        user_input = input("You: ")
+        if user_input.lower() in ("exit", "quit"):
+            break
+        history.append({'role': 'user', 'content': user_input})
+        reply = ai_question(user_input, history)
+        history.append({'role': 'assistant', 'content': reply})
+        msg_db.add_message(chat_id, user_input=user_input,
+                           assistant_output=reply)
+        for char in reply:
+            print(char, end='', flush=True)
+            time.sleep(0.01)
+        print("\n")
+
+
+def open_chat(user_id, chat_id):
+    chat_db = Chat_DB()
+    selected_chat = chat_db.get_chat_by_id(chat_id)
+    print(
+        f"Selected chat ID: {selected_chat.id}, Created at: {selected_chat.created_at}")
+    ai_assistant(user_id, selected_chat.id)
+
+
+def main(user_id=None):
+    chat_db = Chat_DB()
+
+    while True:
+        chats = chat_db.get_all_chats(user_id)
+
+        chats_dict = {}
+        print("\nMenu:")
+        print("1. Create new chat")
+
+        if not chats:
+            print("   No chats yet.")
+        else:
+            for index, chat in enumerate(chats, start=2):
+                chats_dict[index] = chat.id
+                print(f"{index}. Chat {chat.title} (created at {chat.created_at})")
+
+        try:
+            option = int(input("Select option: "))
+        except ValueError:
+            print("Please enter a number.")
+            continue
+
+        match option:
+            case 1:
+                chat_title = str(input('Enter title of chat: '))
+                chat_db.add_chat(user_id=user_id, title=chat_title)
+                print("Chat created!")
+            case _ if option in chats_dict:
+                selected_chat = chat_db.get_chat_by_id(chats_dict[option])
+                print(
+                    f"Selected chat ID: {selected_chat.id}, Created at: {selected_chat.created_at}")
+                open_chat(user_id, selected_chat.id)
+            case _:
+                print("Invalid option.")
