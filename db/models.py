@@ -66,3 +66,20 @@ class SubscriptionCommand:
         self.subscription_id = subscription_id
         self.command_id = command_id
         self.is_enabled = is_enabled
+
+
+class Chat:
+    def __init__(self, id, title, user_id, created_at):
+        self.id = id
+        self.title = title
+        self.user_id = user_id
+        self.created_at = created_at
+
+
+class MessageHistory:
+    def __init__(self, id, user_input, assistant_output, chat_id, timestamp):
+        self.id = id
+        self.input = user_input
+        self.output = assistant_output
+        self.chat_id = chat_id
+        self.timestamp = timestamp
