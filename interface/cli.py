@@ -51,7 +51,7 @@ def open_chat(user_id, chat_id):
     selected_chat = chat_db.get_chat_by_id(chat_id)
     print(
         f"Selected chat ID: {selected_chat.id}, Created at: {selected_chat.created_at}")
-    ai_assistant(user_id, selected_chat.id)
+    ai_assistant(selected_chat.id)
 
 
 def main(user_id=None):
@@ -69,8 +69,8 @@ def main(user_id=None):
         else:
             for index, chat in enumerate(chats, start=2):
                 chats_dict[index] = chat.id
-                print(f"{index}. Chat {chat.title} (created at {chat.created_at})")
-
+                print(f"{index}. {chat.title} (created at {chat.created_at})")
+        print("0. Exit")
         try:
             option = int(input("Select option: "))
         except ValueError:
@@ -82,10 +82,10 @@ def main(user_id=None):
                 chat_title = str(input('Enter title of chat: '))
                 chat_db.add_chat(user_id=user_id, title=chat_title)
                 print("Chat created!")
+            case 0:
+                break
             case _ if option in chats_dict:
                 selected_chat = chat_db.get_chat_by_id(chats_dict[option])
-                print(
-                    f"Selected chat ID: {selected_chat.id}, Created at: {selected_chat.created_at}")
                 open_chat(user_id, selected_chat.id)
             case _:
                 print("Invalid option.")
