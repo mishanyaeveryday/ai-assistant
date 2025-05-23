@@ -45,22 +45,14 @@ class UserSubscription:
         self.is_cancelled = is_cancelled
 
 
-class Command:
-    def __init__(self, id, user_id, command_type, status):
+class Tool:
+    def __init__(self, id, name, description):
         self.id = id
-        self.user_id = user_id
-        self.command_type = command_type
-        self.status = status
-        self.result = None
-
-    def set_status(self, status: str):
-        self.status = status
-
-    def set_result(self, result):
-        self.result = result
+        self.name = name
+        self.description = description
 
 
-class SubscriptionCommand:
+class SubscriptionTool:
     def __init__(self, id, subscription_id, command_id, is_enabled):
         self.id = id
         self.subscription_id = subscription_id
