@@ -1,15 +1,24 @@
-import ollama
+from langchain.agents import initialize_agent, AgentType
+from langchain_community.chat_models import ChatOllama
+from tools.docx_tool import create_docx
 
 
-def ai_question(user_input, history):
-    if history is None:
-        history = []
+class AIClient:
+    def __init__(self, model='deepseek-r1:8b'):
+        self.history = []
+        self.agent = initialize_agent(
+            llm=ChatOllama(model=model),
+            tools=[create_docx],
+            agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION,
+            verbose=True,
+            handle_parsing_errors=True
+        )
 
-    temp_history = history + [{'role': 'user', 'content': user_input}]
+    def ask(self, user_input: str) -> str:
+        return self.agent.invoke(user_input)
 
-    response = ollama.chat(
-        model='deepseek-r1:8b',
-        messages=temp_history
-    )
+    def set_history(self, history):
+        self.history = history
 
-    return response['message']['content']
+    def reset_history(self):
+        self.history = []

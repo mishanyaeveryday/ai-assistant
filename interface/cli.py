@@ -2,7 +2,7 @@
 import sys
 import time
 import threading
-from agent.ai_client import ai_question
+from agent.ai_client import AIClient
 from db.database import Chat_DB, MessageHistory_DB
 
 history = []
@@ -21,6 +21,7 @@ def async_print(text, delay=0.009):
 
 
 def ai_assistant(chat_id):
+    agent = AIClient()
     print("🤖 AI Assistant started (type 'exit' to quit)\n")
     msg_db = MessageHistory_DB()
     message_history = msg_db.get_messages_from_chat(chat_id)
@@ -30,14 +31,13 @@ def ai_assistant(chat_id):
             history.append({'role': 'user', 'content': msg.input})
         if msg.output:
             history.append({'role': 'assistant', 'content': msg.output})
+    agent.set_history(history=history)
 
     while True:
         user_input = input("You: ")
         if user_input.lower() in ("exit", "quit"):
             break
-        history.append({'role': 'user', 'content': user_input})
-        reply = ai_question(user_input, history)
-        history.append({'role': 'assistant', 'content': reply})
+        reply = agent.ask(user_input)
         msg_db.add_message(chat_id, user_input=user_input,
                            assistant_output=reply)
         for char in reply:
