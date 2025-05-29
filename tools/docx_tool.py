@@ -19,8 +19,12 @@ class CreateDocxInput(BaseModel):
 @tool(
     args_schema=CreateDocxInput,
     return_direct=True,
-    description="""Create a .docx file with: title (str), paragraphs (list[str]), optional table_data (list[list[str]]), image_path (str or ""), and save_path (str).
-In your response, output JSON ONLY without any comments or explanations."""
+    description="""
+Create a .docx file with: title (str), paragraphs (list[str]), optional table_data (list[list[str]]), image_path (str or ""), and save_path (str).
+Use this tool ONLY when the user explicitly asks to generate a Word document (e.g., 'generate a Word file', 'create DOCX', 'make a Word report', etc.).
+In all other cases, do not use this tool.
+In your response, output JSON ONLY without any comments or explanations.
+"""
 )
 def create_docx(title: str, paragraphs: List[str],
                 table_data: Optional[List[List[str]]] = None,
