@@ -29,7 +29,7 @@ In your response, output JSON ONLY without any comments or explanations.
 def create_docx(title: str, paragraphs: List[str],
                 table_data: Optional[List[List[str]]] = None,
                 image_path: Optional[str] = "",
-                save_path: str = "output.docx") -> str:
+                save_path: str = "generated_docs/output.docx") -> str:
     document = Document()
     if title:
         document.add_heading(title, level=0)

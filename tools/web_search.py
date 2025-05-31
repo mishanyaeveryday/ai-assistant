@@ -1,0 +1,18 @@
+from langchain.tools.tavily_search import TavilySearchResults
+from config.settings import TAVILY_API_KEY
+from langchain.tools import tool
+
+
+search = TavilySearchResults(api_key=TAVILY_API_KEY)
+
+
+@tool(
+    return_direct=True,
+    description="Use this tool to search the internet for recent or factual information when user asks about current events or general knowledge."
+)
+def web_searching(query: str) -> str:
+    """
+    Use this tool to search for current events or general knowledge online.
+    """
+    print(f"[TOOL] Web searching tool triggered with query: {query}")
+    return search.run(query)
