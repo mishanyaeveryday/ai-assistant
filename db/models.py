@@ -32,7 +32,6 @@ class Subscription:
         self.features = features
         self.price = price
         self.duration_days = duration_days
-        self.is_active = is_active
 
 
 class UserSubscription:
@@ -53,10 +52,10 @@ class Tool:
 
 
 class SubscriptionTool:
-    def __init__(self, id, subscription_id, command_id, is_enabled):
+    def __init__(self, id, subscription_id, tool_id, is_enabled):
         self.id = id
         self.subscription_id = subscription_id
-        self.command_id = command_id
+        self.tool_id = tool_id
         self.is_enabled = is_enabled
 
 

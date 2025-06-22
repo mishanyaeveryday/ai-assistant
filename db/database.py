@@ -94,10 +94,9 @@ class Subscription_DB:
         cursor.execute("""CREATE TABLE IF NOT EXISTS subscriptions (
                        id TEXT PRIMARY KEY,
                        name TEXT UNIQUE NOT NULL,
-                       features TEXT,
+                       tool_id TEXT,
                        price TEXT NOT NULL,
                        duration_days TEXT,
-                       is_active INTEGER
         )""")
         conn.commit()
         conn.close()
@@ -123,15 +122,15 @@ class Subscription_DB:
             return Subscription(*result)
         return None
 
-    def add_subscription(self, name, features, price, duration_days=30):
+    def add_subscription(self, name, tool_id, price, duration_days=30):
         conn = self.connect()
         cursor = conn.cursor()
         id = str(uuid.uuid4())
         try:
             cursor.execute("""
-                INSERT INTO subscriptions (id, name, features, price, duration_days, is_active)
+                INSERT INTO subscriptions (id, name, tool_id, price, duration_days, is_active)
                 VALUES (?,?,?)
-""", (id, name, features, price, duration_days, 0))
+""", (id, name, tool_id, price, duration_days, 0))
             conn.commit()
         except sqlite3.IntegrityError:
             raise ValueError(

@@ -7,7 +7,6 @@ search = TavilySearchResults(api_key=TAVILY_API_KEY)
 
 
 @tool(
-    return_direct=True,
     description="Use this tool to search the internet for recent or factual information when user asks about current events or general knowledge."
 )
 def web_searching(query: str) -> str:

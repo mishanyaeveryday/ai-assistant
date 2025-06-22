@@ -1,18 +1,22 @@
+from langchain_groq import ChatGroq
 from langchain.agents import initialize_agent, AgentType
-from langchain_community.chat_models import ChatOllama
 from tools.docx_tool import create_docx
 from tools.web_search import web_searching
 
 
 class AIClient:
-    def __init__(self, model='deepseek-r1:8b'):
+    def __init__(self, model='llama3-70b-8192'):
         self.history = []
+        self.llm = ChatGroq(
+            model_name=model,
+            temperature=0
+        )
         self.agent = initialize_agent(
-            llm=ChatOllama(model=model),
+            llm=self.llm,
             tools=[create_docx, web_searching],
             agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION,
             verbose=True,
-            handle_parsing_errors=True
+            handle_parsing_errors=True,
         )
 
     def ask(self, user_input: str) -> str:
