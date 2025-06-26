@@ -1,4 +1,4 @@
-from db.models import User, Subscription, UserSubscription, Tool, SubscriptionTool, Chat, MessageHistory
+from db.models import User, Subscription, UserSubscription, Chat, MessageHistory
 import sqlite3
 import uuid
 import json
@@ -39,7 +39,7 @@ class User_DB:
         try:
             cursor.execute("""
             INSERT INTO users (id, username, email, password)
-            VALUES (?,?,?)
+            VALUES (?,?,?,?)
 """, (id, username, email, hashed_password))
             conn.commit()
         except sqlite3.IntegrityError:
@@ -208,67 +208,6 @@ class UserSubscription_DB:
         """, (subscription_id,))
         conn.commit()
         conn.close()
-
-
-class Tool_DB:
-    def __init__(self, db_name='ai-assistent.sqlite3'):
-        self.db_name = db_name
-
-    def connect(self):
-        return sqlite3.connect(self.db_name)
-
-    def create_table(self):
-        conn = self.connect()
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS tools (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                description TEXT
-            )
-        """)
-        conn.commit()
-        conn.close()
-
-    def add_tool(self, name, description):
-        conn = self.connect()
-        cursor = conn.cursor()
-        id = str(uuid.uuid4())
-        cursor.execute("""
-            INSERT INTO tools (id, name, description)
-            VALUES (?, ?, ?)
-        """, (id, name, description))
-        conn.commit()
-        conn.close()
-
-    def get_tool_by_id(self, id: str):
-        conn = self.connect()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT * FROM tools WHERE id = ?
-        """, (id,))
-        row = cursor.fetchone()
-        conn.close()
-        if row:
-            return Tool(
-                id=row[0], name=row[1], description=row[2]
-            )
-        return None
-
-    def get_all_tools(self):
-        conn = self.connect()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT * FROM tools
-        """)
-        rows = cursor.fetchall()
-        conn.close()
-
-        return [
-            Tool(
-                id=row[0], name=row[1], description=row[2])
-            for row in rows
-        ]
 
 
 class Chat_DB:
