@@ -44,13 +44,6 @@ class UserSubscription:
         self.is_cancelled = is_cancelled
 
 
-class Tool:
-    def __init__(self, id, name, description):
-        self.id = id
-        self.name = name
-        self.description = description
-
-
 class SubscriptionTool:
     def __init__(self, id, subscription_id, tool_id, is_enabled):
         self.id = id

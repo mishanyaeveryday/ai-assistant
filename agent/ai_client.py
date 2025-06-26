@@ -2,6 +2,7 @@ from langchain_groq import ChatGroq
 from langchain.agents import initialize_agent, AgentType
 from tools.docx_tool import create_docx
 from tools.web_search import web_searching
+from config.settings import GROQ_API_KEY
 
 
 class AIClient:
@@ -9,7 +10,8 @@ class AIClient:
         self.history = []
         self.llm = ChatGroq(
             model_name=model,
-            temperature=0
+            temperature=0,
+            api_key=GROQ_API_KEY
         )
         self.agent = initialize_agent(
             llm=self.llm,

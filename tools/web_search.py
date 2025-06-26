@@ -13,5 +13,4 @@ def web_searching(query: str) -> str:
     """
     Use this tool to search for current events or general knowledge online.
     """
-    print(f"[TOOL] Web searching tool triggered with query: {query}")
     return search.run(query)
