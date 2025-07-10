@@ -1,28 +1,21 @@
 import bcrypt
+from db.database import User_DB
 
 
 class User:
-    def __init__(self, id, username, email, password, type_of_suscription,
+    def __init__(self, id, username, email, password, type_of_subscription,
                  os_type, created_at, last_active, language, history_enabled, is_active):
         self.id = id
         self.username = username
         self.email = email
         self.password = password
-        self.type_of_subscription = type_of_suscription
+        self.type_of_subscription = type_of_subscription
         self.os_type = os_type
         self.created_at = created_at
         self.last_active = last_active
         self.language = language
         self.history_enabled = history_enabled
         self.is_active = is_active
-
-    @staticmethod
-    def hash_password(password):
-        return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-
-    @staticmethod
-    def check_password(stored_password, provided_password):
-        return bcrypt.checkpw(provided_password.encode('utf-8'), stored_password.encode('utf-8'))
 
 
 class Subscription:

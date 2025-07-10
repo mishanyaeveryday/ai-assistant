@@ -9,76 +9,80 @@ class User_DB:
     def __init__(self, db_name='ai-assistent.sqlite3'):
         self.db_name = db_name
 
-    def connect(self):
+    def _get_connection(self):
         return sqlite3.connect(self.db_name)
 
+    def _row_to_dict(self, cursor, row):
+        if row is None:
+            return None
+        return {desc[0]: value for desc, value in zip(cursor.description, row)}
+
     def create_table(self):
-        conn = self.connect()
-        cursor = conn.cursor()
-        cursor.execute("""CREATE TABLE IF NOT EXISTS users (
-                       id TEXT PRIMARY KEY,
-                       username TEXT UNIQUE NOT NULL,
-                       email TEXT UNIQUE NOT NULL,
-                       password TEXT NOT NULL,
-                       type_of_subscription TEXT,
-                       os_type TEXT,
-                       created_at TEXT,
-                       last_active TEXT,
-                       language TEXT DEFAULT "eng",
-                       history_enabled INTEGER,
-                       is_active INTEGER
-        )""")
-        conn.commit()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""CREATE TABLE IF NOT EXISTS users (
+                        id TEXT PRIMARY KEY,
+                        username TEXT UNIQUE NOT NULL,
+                        email TEXT UNIQUE NOT NULL,
+                        password TEXT NOT NULL,
+                        type_of_subscription TEXT,
+                        os_type TEXT,
+                        created_at TEXT,
+                        last_active TEXT,
+                        language TEXT DEFAULT "eng",
+                        history_enabled INTEGER,
+                        is_active INTEGER
+            )""")
+            conn.commit()
 
     def add_user(self, username, email, password):
-        hashed_password = User.hash_password(password)
-        conn = self.connect()
-        cursor = conn.cursor()
-        id = str(uuid.uuid4())
-        try:
-            cursor.execute("""
-            INSERT INTO users (id, username, email, password)
-            VALUES (?,?,?,?)
-""", (id, username, email, hashed_password))
-            conn.commit()
-        except sqlite3.IntegrityError:
-            raise ValueError(
-                "User with this username or email already exists.")
-        finally:
-            conn.close()
-
-    def get_user_by_username(self, username):
-        conn = self.connect()
-        cursor = conn.cursor()
-        cursor.execute(
-            'SELECT * FROM users WHERE username = ?', (username))
-        result = cursor.fetchone()
-        conn.close()
-        if result:
-            return User(*result)
-        return None
-
-    def get_user_by_id(self, user_id):
-        conn = self.connect()
-        cursor = conn.cursor()
-        cursor.execute(
-            'SELECT * FROM users WHERE id = ?', (user_id))
-        result = cursor.fetchone()
-        conn.close()
-        if result:
-            return User(*result)
-        return None
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            id = str(uuid.uuid4())
+            try:
+                cursor.execute("""
+                INSERT INTO users (id, username, email, password)
+                VALUES (?,?,?,?)
+    """, (id, username, email, password))
+                conn.commit()
+                return id
+            except sqlite3.IntegrityError:
+                return None
 
     def get_all_users(self):
-        conn = self.connect()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM users')
-        rows = cursor.fetchall()
-        conn.close()
-        if rows:
-            return [User(*row) for row in rows]
-        return []
+        with self._get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM users')
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def get_user_by_username(self, username):
+        with self._get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                'SELECT * FROM users WHERE username = ?', (username))
+            result = cursor.fetchone()
+            return dict(result) if result else None
+
+    def get_user_by_id(self, id):
+        with self._get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                'SELECT * FROM users WHERE id = ?', (id))
+            result = cursor.fetchone()
+            return dict(result) if result else None
+
+    def get_user_by_email(self, email):
+        with self._get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                'SELECT * FROM users WHERE email = ?', (email))
+            result = cursor.fetchone()
+            return dict(result) if result else None
 
 
 class Subscription_DB:
