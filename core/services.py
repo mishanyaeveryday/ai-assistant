@@ -42,7 +42,7 @@ class AuthService:
             return (False, f'No user with username {username}.')
 
         is_password_correct = self.check_password(
-            stored_password_hash=user_by_username.password,
+            stored_password_hash=user_by_username['password'],
             provided_password=password
         )
 
