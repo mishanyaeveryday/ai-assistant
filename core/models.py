@@ -1,5 +1,3 @@
-import bcrypt
-from db.database import User_DB
 
 
 class User:
