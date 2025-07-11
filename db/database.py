@@ -1,4 +1,4 @@
-from db.models import User, Subscription, UserSubscription, Chat, MessageHistory
+from core.models import User, Subscription, UserSubscription, Chat, MessageHistory
 import sqlite3
 import uuid
 import json
@@ -62,7 +62,7 @@ class User_DB:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute(
-                'SELECT * FROM users WHERE username = ?', (username))
+                'SELECT * FROM users WHERE username = ?', (username,))
             result = cursor.fetchone()
             return dict(result) if result else None
 
@@ -71,7 +71,7 @@ class User_DB:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute(
-                'SELECT * FROM users WHERE id = ?', (id))
+                'SELECT * FROM users WHERE id = ?', (id,))
             result = cursor.fetchone()
             return dict(result) if result else None
 
@@ -80,7 +80,7 @@ class User_DB:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute(
-                'SELECT * FROM users WHERE email = ?', (email))
+                'SELECT * FROM users WHERE email = ?', (email,))
             result = cursor.fetchone()
             return dict(result) if result else None
 
