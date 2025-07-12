@@ -4,8 +4,9 @@ from PyQt6.QtWidgets import QApplication
 from db.database import Chat_DB, MessageHistory_DB, User_DB
 from core.services import AuthService
 
-from interface.gui.view import RegistrationWindow, LoginWindow
+from interface.gui.view import RegistrationWindow, LoginWindow, MainWindow
 from interface.gui.controller import RegistrationController, LoginController, ViewManager
+from core.models import User
 
 
 def start_gui():
@@ -20,25 +21,29 @@ def start_gui():
 
     app = QApplication(sys.argv)
 
-    # Модель (остается как есть)
-    # Использую заглушку AuthService
     auth_model = AuthService(user_db=user_db_instance)
 
-    # Представления (Views)
+    # Views
+    main_view = MainWindow()
     registration_view = RegistrationWindow()
     login_view = LoginWindow()
 
-    # --- Создаем наш менеджер окон ---
-    view_manager = ViewManager(login_view, registration_view)
+    view_manager = ViewManager(main_view, login_view, registration_view)
 
-    # Контроллеры (остаются как есть, они работают со своими моделями и представлениями)
+    # Controllers
     registration_controller = RegistrationController(
         model=auth_model, view=registration_view)
 
     login_controller = LoginController(
         model=auth_model, view=login_view)
 
-    # --- Показываем начальное окно через менеджер ---
+    def on_login_success(user: User):
+        main_view.set_user_data(
+            {"username": user.username, "email": user.email})
+
+        view_manager.show_main_window()
+
+    login_controller.login_successful.connect(on_login_success)
     view_manager.show_login()
 
     sys.exit(app.exec())

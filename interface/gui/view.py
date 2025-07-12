@@ -1,6 +1,32 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout,
                              QPushButton, QLabel, QLineEdit, QFormLayout, QHBoxLayout, QFrame)
 from PyQt6.QtCore import Qt, pyqtSignal
+from db.database import User_DB
+
+
+class MainWindow(QMainWindow):
+    logout_requested = pyqtSignal()
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("AI-assistant")
+        self.resize(900, 550)
+
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        layout = QVBoxLayout(self.central_widget)
+
+        self.welcome_label = QLabel("Welcome!")
+
+        self.logout_button = QPushButton("Logout")
+        self.logout_button.clicked.connect(
+            self.logout_requested.emit)
+
+        layout.addWidget(self.welcome_label)
+        layout.addWidget(self.logout_button)
+
+    def set_user_data(self, user_data: dict):
+        self.welcome_label.setText(f"Welcome, {user_data['username']}!")
 
 
 class RegistrationWindow(QMainWindow):
