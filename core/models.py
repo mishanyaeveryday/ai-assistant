@@ -15,6 +15,22 @@ class User:
         self.history_enabled = history_enabled
         self.is_active = is_active
 
+    @classmethod
+    def from_db_row(cls, row: dict):
+        return cls(
+            id=row['id'],
+            username=row['username'],
+            email=row['email'],
+            password=row['password'],
+            type_of_subscription=row['type_of_subscription'],
+            os_type=row.get('os_type'),
+            created_at=row.get('created_at'),
+            last_active=row.get('last_active'),
+            language=row.get('language'),
+            history_enabled=row.get('history_enabled'),
+            is_active=row.get('is_active')
+        )
+
 
 class Subscription:
     def __init__(self, id, name, features, price, duration_days, is_active):

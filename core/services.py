@@ -1,5 +1,6 @@
 import bcrypt
 from db.database import User_DB
+from core.models import User
 
 
 class AuthService:
@@ -36,17 +37,11 @@ class AuthService:
             return (False, "Could not create a user in the database.")
 
     def login_user(self, username, password):
-        user_by_username = self.user_db.get_user_by_username(username)
+        user_data = self.user_db.get_user_by_username(
+            username)
 
-        if not user_by_username:
-            return (False, f'No user with username {username}.')
-
-        is_password_correct = self.check_password(
-            stored_password_hash=user_by_username['password'],
-            provided_password=password
-        )
-
-        if not is_password_correct:
-            return (False, "Wrong password.")
-
-        return (True, user_by_username)
+        if user_data and self.check_password(stored_password_hash=user_data['password'], provided_password=password):
+            user_object = User.from_db_row(user_data)
+            return True, user_object
+        else:
+            return False, "Invalid username or password"
