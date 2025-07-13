@@ -218,9 +218,6 @@ class Chat_DB:
     def __init__(self, db_name='ai-assistent.sqlite3'):
         self.db_name = db_name
 
-    def connect(self):
-        return sqlite3.connect(self.db_name)
-
     def _get_connection(self):
         return sqlite3.connect(self.db_name)
 
@@ -230,32 +227,17 @@ class Chat_DB:
         return {desc[0]: value for desc, value in zip(cursor.description, row)}
 
     def create_table(self):
-        conn = self.connect()
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS chats (
-                id TEXT PRIMARY KEY,
-                title TEXT,
-                user_id TEXT,
-                created_at TEXT
-            )
-        """)
-        conn.commit()
-        conn.close()
-
-    def get_all_chats(self, user_id=None):
-        conn = self.connect()
-        cursor = conn.cursor()
-
-        if user_id is not None:
-            cursor.execute('SELECT * FROM chats WHERE user_id = ?', (user_id,))
-        else:
-            cursor.execute('SELECT * FROM chats WHERE user_id IS NULL')
-
-        rows = cursor.fetchall()
-        conn.close()
-
-        return [Chat(*row) for row in rows] if rows else []
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS chats (
+                    id TEXT PRIMARY KEY,
+                    title TEXT,
+                    user_id TEXT,
+                    created_at TEXT
+                )
+            """)
+            conn.commit()
 
     def get_all_chats_by_user_id(self, id):
         with self._get_connection() as conn:
@@ -277,20 +259,18 @@ class Chat_DB:
             return chats_list
 
     def add_chat(self, title=None, user_id=None):
-        conn = self.connect()
-        cursor = conn.cursor()
-        id = str(uuid.uuid4())
-        created_at = datetime.now().isoformat()
-        try:
-            cursor.execute("""
-            INSERT INTO chats (id, title, user_id, created_at)
-            VALUES (?,?,?,?)
-""", (id, title, user_id, created_at))
-            conn.commit()
-        except sqlite3.IntegrityError:
-            raise ValueError("Chat with this ID already exists.")
-        finally:
-            conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            id = str(uuid.uuid4())
+            created_at = datetime.now().isoformat()
+            try:
+                cursor.execute("""
+                INSERT INTO chats (id, title, user_id, created_at)
+                VALUES (?,?,?,?)
+    """, (id, title, user_id, created_at))
+                conn.commit()
+            except sqlite3.IntegrityError:
+                raise ValueError("Chat with this ID already exists.")
 
 
 class MessageHistory_DB:
