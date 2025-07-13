@@ -1,6 +1,6 @@
 import bcrypt
-from db.database import User_DB, Chat_DB
 from core.models import User, Chat
+from db.database import User_DB, Chat_DB
 
 
 class AuthService:
@@ -57,3 +57,6 @@ class ChatService:
             return []
 
         return [Chat.from_db_row(row) for row in chats_rows]
+
+    def create_new_chat(self, user_id: str, chat_title: str):
+        self.chat_db.add_chat(title=chat_title, user_id=user_id)
