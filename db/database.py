@@ -89,129 +89,129 @@ class Subscription_DB:
     def __init__(self, db_name='ai-assistent.sqlite3'):
         self.db_name = db_name
 
-    def connect(self):
+    def _get_connection(self):
         return sqlite3.connect(self.db_name)
 
+    def _row_to_dict(self, cursor, row):
+        if row is None:
+            return None
+        return {desc[0]: value for desc, value in zip(cursor.description, row)}
+
     def create_table(self):
-        conn = self.connect()
-        cursor = conn.cursor()
-        cursor.execute("""CREATE TABLE IF NOT EXISTS subscriptions (
-                       id TEXT PRIMARY KEY,
-                       name TEXT UNIQUE NOT NULL,
-                       tool_id TEXT,
-                       price TEXT NOT NULL,
-                       duration_days TEXT,
-        )""")
-        conn.commit()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""CREATE TABLE IF NOT EXISTS subscriptions (
+                        id TEXT PRIMARY KEY,
+                        name TEXT UNIQUE NOT NULL,
+                        tool_id TEXT,
+                        price TEXT NOT NULL,
+                        duration_days TEXT,
+            )""")
+            conn.commit()
 
     def get_all_subscriptions(self):
-        conn = self.connect()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM subscriptions')
-        rows = cursor.fetchall()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM subscriptions')
+            rows = cursor.fetchall()
         if rows:
             return [Subscription(*row) for row in rows]
         return []
 
     def get_subscription_by_id(self, subscription_id):
-        conn = self.connect()
-        cursor = conn.cursor()
-        cursor.execute(
-            'SELECT * FROM subscriptions WHERE id = ?', (subscription_id))
-        result = cursor.fetchone()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                'SELECT * FROM subscriptions WHERE id = ?', (subscription_id))
+            result = cursor.fetchone()
         if result:
             return Subscription(*result)
         return None
 
     def add_subscription(self, name, tool_id, price, duration_days=30):
-        conn = self.connect()
-        cursor = conn.cursor()
-        id = str(uuid.uuid4())
-        try:
-            cursor.execute("""
-                INSERT INTO subscriptions (id, name, tool_id, price, duration_days, is_active)
-                VALUES (?,?,?)
-""", (id, name, tool_id, price, duration_days, 0))
-            conn.commit()
-        except sqlite3.IntegrityError:
-            raise ValueError(
-                "Subscription with this name already exists.")
-        finally:
-            conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            id = str(uuid.uuid4())
+            try:
+                cursor.execute("""
+                    INSERT INTO subscriptions (id, name, tool_id, price, duration_days, is_active)
+                    VALUES (?,?,?)
+    """, (id, name, tool_id, price, duration_days, 0))
+                conn.commit()
+            except sqlite3.IntegrityError:
+                raise ValueError(
+                    "Subscription with this name already exists.")
 
 
 class UserSubscription_DB:
     def __init__(self, db_name='ai-assistent.sqlite3'):
         self.db_name = db_name
 
-    def connect(self):
+    def _get_connection(self):
         return sqlite3.connect(self.db_name)
 
+    def _row_to_dict(self, cursor, row):
+        if row is None:
+            return None
+        return {desc[0]: value for desc, value in zip(cursor.description, row)}
+
     def create_table(self):
-        conn = self.connect()
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS user_subscriptions (
-                id TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                subscription_id TEXT NOT NULL,
-                activated_at TEXT NOT NULL,
-                expires_at TEXT NOT NULL,
-                is_cancelled INTEGER NOT NULL DEFAULT 0
-            )
-        """)
-        conn.commit()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_subscriptions (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    subscription_id TEXT NOT NULL,
+                    activated_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    is_cancelled INTEGER NOT NULL DEFAULT 0
+                )
+            """)
+            conn.commit()
 
     def add_user_subscription(self, user_id, subscription_id, duration_days=30):
-        conn = self.connect()
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            id = str(uuid.uuid4())
+            subscription_id = str(subscription_id)
+            now = datetime.now()
+            expires_at = now + timedelta(days=int(duration_days))
 
-        id = str(uuid.uuid4())
-        subscription_id = str(subscription_id)
-        now = datetime.now()
-        expires_at = now + timedelta(days=int(duration_days))
+            cursor.execute("""
+                INSERT INTO user_subscriptions (id, user_id, subscription_id, activated_at, expires_at, is_cancelled)
+                VALUES (?, ?, ?, ?, ?, 0)
+            """, (
+                id,
+                user_id,
+                subscription_id,
+                now.isoformat(),
+                expires_at.isoformat()
+            ))
 
-        cursor.execute("""
-            INSERT INTO user_subscriptions (id, user_id, subscription_id, activated_at, expires_at, is_cancelled)
-            VALUES (?, ?, ?, ?, ?, 0)
-        """, (
-            id,
-            user_id,
-            subscription_id,
-            now.isoformat(),
-            expires_at.isoformat()
-        ))
-
-        conn.commit()
-        conn.close()
+            conn.commit()
         return id
 
     def get_user_subscriptions_by_user_id(self, user_id):
-        conn = self.connect()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT * FROM user_subscriptions WHERE user_id = ?
-        """, (user_id,))
-        rows = cursor.fetchall()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM user_subscriptions WHERE user_id = ?
+            """, (user_id,))
+            rows = cursor.fetchall()
         if rows:
             return [UserSubscription(*row) for row in rows]
         return []
 
     def cancel_subscription(self, subscription_id):
-        conn = self.connect()
-        cursor = conn.cursor()
-        cursor.execute("""
-            UPDATE user_subscriptions
-            SET is_cancelled = 1
-            WHERE id = ?
-        """, (subscription_id,))
-        conn.commit()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE user_subscriptions
+                SET is_cancelled = 1
+                WHERE id = ?
+            """, (subscription_id,))
+            conn.commit()
 
 
 class Chat_DB:
