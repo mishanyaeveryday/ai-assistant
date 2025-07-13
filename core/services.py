@@ -1,6 +1,6 @@
 import bcrypt
-from db.database import User_DB
-from core.models import User
+from db.database import User_DB, Chat_DB
+from core.models import User, Chat
 
 
 class AuthService:
@@ -45,3 +45,15 @@ class AuthService:
             return True, user_object
         else:
             return False, "Invalid username or password"
+
+
+class ChatService:
+    def __init__(self, chat_db: Chat_DB):
+        self.chat_db = chat_db
+
+    def get_all_user_chats(self, user_id: str) -> list[Chat]:
+        chats_rows = self.chat_db.get_all_chats_by_user_id(id=user_id)
+        if not chats_rows:
+            return []
+
+        return [Chat.from_db_row(row) for row in chats_rows]

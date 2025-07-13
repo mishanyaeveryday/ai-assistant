@@ -4,7 +4,7 @@ from PyQt6.QtCore import pyqtSignal, QObject
 from core.models import User
 from agent.ai_client import AIClient
 from interface.gui.view import RegistrationWindow, LoginWindow, MainWindow
-from core.services import AuthService
+from core.services import AuthService, ChatService
 from core.models import User
 
 
@@ -98,3 +98,13 @@ class LoginController(QObject):
 
         else:
             self._view.show_message(result, is_error=True)
+
+
+class MainWindowController(QObject):
+    def __init__(self, model: ChatService, view: MainWindow):
+        super().__init__()
+        self._model = model
+        self._view = view
+
+    def show(self):
+        self._view.show()

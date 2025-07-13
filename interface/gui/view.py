@@ -1,11 +1,12 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout,
-                             QPushButton, QLabel, QLineEdit, QFormLayout, QHBoxLayout, QFrame)
+                             QPushButton, QLabel, QLineEdit, QFormLayout, QHBoxLayout, QFrame, QScrollArea)
 from PyQt6.QtCore import Qt, pyqtSignal
-from db.database import User_DB
+import uuid
 
 
 class MainWindow(QMainWindow):
     logout_requested = pyqtSignal()
+    chat_selected = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
@@ -14,19 +15,71 @@ class MainWindow(QMainWindow):
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
-        layout = QVBoxLayout(self.central_widget)
+        main_layout = QHBoxLayout(self.central_widget)
+
+        left_panel = QFrame()
+        left_panel.setFixedWidth(250)
+        left_panel.setStyleSheet("background-color: #f0f0f0;")
+        left_panel_layout = QVBoxLayout(left_panel)
 
         self.welcome_label = QLabel("Welcome!")
-
+        self.new_chat_button = QPushButton("+ New Chat")
         self.logout_button = QPushButton("Logout")
-        self.logout_button.clicked.connect(
-            self.logout_requested.emit)
+        self.logout_button.clicked.connect(self.logout_requested.emit)
 
-        layout.addWidget(self.welcome_label)
-        layout.addWidget(self.logout_button)
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        self.chats_container = QWidget()
+        self.chats_layout = QVBoxLayout(
+            self.chats_container)
+        self.chats_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        scroll_area.setWidget(self.chats_container)
+
+        left_panel_layout.addWidget(self.welcome_label)
+        left_panel_layout.addWidget(self.new_chat_button)
+        left_panel_layout.addWidget(QLabel("Your Chats:"))
+        left_panel_layout.addWidget(scroll_area)
+        left_panel_layout.addStretch()
+        left_panel_layout.addWidget(self.logout_button)
+
+        right_panel = QFrame()
+        right_panel_layout = QVBoxLayout(right_panel)
+        self.chat_info = QLabel("Select a chat to start or create a new one.")
+        self.chat_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        right_panel_layout.addWidget(self.chat_info)
+
+        main_layout.addWidget(left_panel)
+        main_layout.addWidget(right_panel)
+
+        self.chat_buttons = {}
 
     def set_user_data(self, user_data: dict):
         self.welcome_label.setText(f"Welcome, {user_data['username']}!")
+
+    def update_chats_list(self, chats_data: list[dict]):
+        while self.chats_layout.count():
+            item = self.chats_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self.chat_buttons.clear()
+
+        if not chats_data:
+            no_chats_label = QLabel("No chats yet.")
+            self.chats_layout.addWidget(no_chats_label)
+            return
+
+        for chat in chats_data:
+            chat_id = chat['id']
+            chat_title = chat.get('title', f'Chat {chat_id}')
+
+            button = QPushButton(chat_title)
+
+            button.clicked.connect(
+                lambda checked, chat_id=chat_id: self.chat_selected.emit(chat_id))
+
+            self.chats_layout.addWidget(button)
+            self.chat_buttons[chat_id] = button
 
 
 class RegistrationWindow(QMainWindow):
