@@ -277,95 +277,96 @@ class MessageHistory_DB:
     def __init__(self, db_name='ai-assistent.sqlite3'):
         self.db_name = db_name
 
-    def connect(self):
+    def _get_connection(self):
         return sqlite3.connect(self.db_name)
 
+    def _row_to_dict(self, cursor, row):
+        if row is None:
+            return None
+        return {desc[0]: value for desc, value in zip(cursor.description, row)}
+
     def create_table(self):
-        conn = self.connect()
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS messages_history (
-                id TEXT PRIMARY KEY,
-                input TEXT,
-                output TEXT,
-                chat_id TEXT NOT NULL,
-                timestamp TEXT
-            )
-        """)
-        conn.commit()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS messages_history (
+                    id TEXT PRIMARY KEY,
+                    input TEXT,
+                    output TEXT,
+                    chat_id TEXT NOT NULL,
+                    timestamp TEXT
+                )
+            """)
+            conn.commit()
 
     def get_all_messages(self):
-        conn = self.connect()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM messages_history')
-        rows = cursor.fetchall()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM messages_history')
+            rows = cursor.fetchall()
         if rows:
             return [MessageHistory(*row) for row in rows]
         return []
 
     def get_messages_from_chat(self, chat_id):
-        conn = self.connect()
-        cursor = conn.cursor()
-        cursor.execute(
-            'SELECT * FROM messages_history WHERE chat_id = ? ORDER BY timestamp', (chat_id,))
-        rows = cursor.fetchall()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                'SELECT * FROM messages_history WHERE chat_id = ? ORDER BY timestamp', (chat_id,))
+            rows = cursor.fetchall()
         if rows:
             return [MessageHistory(*row) for row in rows]
         return []
 
     def get_last_message(self):
-        conn = self.connect()
-        cursor = conn.cursor()
-        cursor.execute(
-            'SELECT * FROM messages_history ORDER BY timestamp DESC LIMIT 1')
-        row = cursor.fetchone()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                'SELECT * FROM messages_history ORDER BY timestamp DESC LIMIT 1')
+            row = cursor.fetchone()
         if row:
             return MessageHistory(*row)
         return None
 
     def add_message(self, chat_id, user_input=None, assistant_output=None):
-        conn = self.connect()
-        cursor = conn.cursor()
-        id = str(uuid.uuid4())
-        timestamp = datetime.now().isoformat()
-        assistant_output_str = json.dumps(assistant_output)
-        try:
-            cursor.execute("""
-            INSERT INTO messages_history (id, input, output, chat_id, timestamp)
-            VALUES (?,?,?,?,?)
-""", (id, user_input, assistant_output_str, chat_id, timestamp))
-            conn.commit()
-        except sqlite3.IntegrityError:
-            raise ValueError("Message with this ID already exists.")
-        finally:
-            conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            id = str(uuid.uuid4())
+            timestamp = datetime.now().isoformat()
+            assistant_output_str = json.dumps(
+                assistant_output) if assistant_output is not None else None
+            try:
+                cursor.execute("""
+                INSERT INTO messages_history (id, input, output, chat_id, timestamp)
+                VALUES (?,?,?,?,?)
+    """, (id, user_input, assistant_output_str, chat_id, timestamp))
+                conn.commit()
+            except sqlite3.IntegrityError:
+                raise ValueError("Message with this ID already exists.")
 
     def edit_message(self, id, user_input, assistant_output):
-        conn = self.connect()
-        cursor = conn.cursor()
-        updates = []
-        values = []
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            updates = []
+            values = []
 
-        if user_input is not None:
-            updates.append("input = ?")
-            values.append(user_input)
-        if assistant_output is not None:
-            updates.append("output = ?")
-            values.append(user_input)
+            if user_input is not None:
+                updates.append("input = ?")
+                values.append(user_input)
+            if assistant_output is not None:
+                updates.append("output = ?")
+                values.append(json.dumps(assistant_output))
 
-        if not updates:
-            raise ValueError("No new data provided for update.")
+            if not updates:
+                raise ValueError("No new data provided for update.")
 
-        values.append(id)
-        query = f"""
-        UPDATE messages_history
-        SET {','.join(updates)}
-        WHERE id = ? """
+            values.append(id)
 
-        cursor.execute(query, values)
-        conn.commit()
-        conn.close()
+        query = f"UPDATE messages_history SET {', '.join(updates)} WHERE id = ?"
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, tuple(values))
+            if cursor.rowcount == 0:
+                raise ValueError(f"No message found with ID: {id}")
+            conn.commit()
