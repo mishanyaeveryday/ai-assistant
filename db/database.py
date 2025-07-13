@@ -221,6 +221,14 @@ class Chat_DB:
     def connect(self):
         return sqlite3.connect(self.db_name)
 
+    def _get_connection(self):
+        return sqlite3.connect(self.db_name)
+
+    def _row_to_dict(self, cursor, row):
+        if row is None:
+            return None
+        return {desc[0]: value for desc, value in zip(cursor.description, row)}
+
     def create_table(self):
         conn = self.connect()
         cursor = conn.cursor()
@@ -249,15 +257,24 @@ class Chat_DB:
 
         return [Chat(*row) for row in rows] if rows else []
 
-    def get_chat_by_id(self, id):
-        conn = self.connect()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM chats WHERE id = ?', (id,))
-        row = cursor.fetchone()
-        conn.close()
-        if row:
-            return Chat(*row)
-        return None
+    def get_all_chats_by_user_id(self, id):
+        with self._get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute(
+                'SELECT * FROM chats WHERE user_id = ?', (id,))
+
+            rows = cursor.fetchall()
+            if not rows:
+                return []
+
+            columns = [description[0]
+                       for description in cursor.description]
+
+            chats_list = [dict(zip(columns, row)) for row in rows]
+
+            return chats_list
 
     def add_chat(self, title=None, user_id=None):
         conn = self.connect()

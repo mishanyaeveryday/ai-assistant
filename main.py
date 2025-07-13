@@ -2,7 +2,7 @@ import sys
 from PyQt6.QtWidgets import QApplication
 
 from db.database import Chat_DB, MessageHistory_DB, User_DB
-from core.services import AuthService
+from core.services import AuthService, ChatService
 
 from interface.gui.view import RegistrationWindow, LoginWindow, MainWindow
 from interface.gui.controller import RegistrationController, LoginController, ViewManager
@@ -22,7 +22,7 @@ def start_gui():
     app = QApplication(sys.argv)
 
     auth_model = AuthService(user_db=user_db_instance)
-
+    chat_model = ChatService(chat_db=chat_db_instance)
     # Views
     main_view = MainWindow()
     registration_view = RegistrationWindow()
@@ -40,6 +40,13 @@ def start_gui():
     def on_login_success(user: User):
         main_view.set_user_data(
             {"username": user.username, "email": user.email})
+
+        chat_objects = chat_model.get_all_user_chats(user_id=user.id)
+        chats_for_view = []
+        for chat_obj in chat_objects:
+            chats_for_view.append({'id': chat_obj.id, 'title': chat_obj.title})
+
+        main_view.update_chats_list(chats_for_view)
 
         view_manager.show_main_window()
 
