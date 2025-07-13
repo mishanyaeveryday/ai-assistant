@@ -2,11 +2,11 @@ import sys
 from PyQt6.QtWidgets import QApplication
 
 from db.database import Chat_DB, MessageHistory_DB, User_DB
+from core.models import User
 from core.services import AuthService, ChatService
 
-from interface.gui.view import RegistrationWindow, LoginWindow, MainWindow
-from interface.gui.controller import RegistrationController, LoginController, ViewManager
-from core.models import User
+from interface.gui.view import RegistrationWindow, LoginWindow, MainWindow, NewChatWindow
+from interface.gui.controller import RegistrationController, LoginController, MainWindowController, ViewManager
 
 
 def start_gui():
@@ -25,10 +25,12 @@ def start_gui():
     chat_model = ChatService(chat_db=chat_db_instance)
     # Views
     main_view = MainWindow()
+    new_chat_window = NewChatWindow()
     registration_view = RegistrationWindow()
     login_view = LoginWindow()
 
-    view_manager = ViewManager(main_view, login_view, registration_view)
+    view_manager = ViewManager(
+        main_view=main_view, new_chat_view=new_chat_window, login_view=login_view, registration_view=registration_view)
 
     # Controllers
     registration_controller = RegistrationController(
@@ -37,16 +39,21 @@ def start_gui():
     login_controller = LoginController(
         model=auth_model, view=login_view)
 
+    main_window_controller = None
+
     def on_login_success(user: User):
+
+        nonlocal main_window_controller
+
+        main_window_controller = MainWindowController(user=user,
+                                                      model=chat_model, view=main_view)
         main_view.set_user_data(
             {"username": user.username, "email": user.email})
 
-        chat_objects = chat_model.get_all_user_chats(user_id=user.id)
-        chats_for_view = []
-        for chat_obj in chat_objects:
-            chats_for_view.append({'id': chat_obj.id, 'title': chat_obj.title})
+        main_window_controller.update_chat_list_in_view()
 
-        main_view.update_chats_list(chats_for_view)
+        new_chat_window.on_submit.connect(
+            main_window_controller.handle_create_new_chat)
 
         view_manager.show_main_window()
 

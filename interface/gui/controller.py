@@ -1,23 +1,22 @@
-import sys
-from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import pyqtSignal, QObject
 from core.models import User
-from agent.ai_client import AIClient
-from interface.gui.view import RegistrationWindow, LoginWindow, MainWindow
+from interface.gui.view import RegistrationWindow, LoginWindow, MainWindow, NewChatWindow
 from core.services import AuthService, ChatService
-from core.models import User
 
 
 class ViewManager:
 
-    def __init__(self, main_view: MainWindow, login_view: LoginWindow, registration_view: RegistrationWindow):
+    def __init__(self, main_view: MainWindow, new_chat_view: NewChatWindow, login_view: LoginWindow, registration_view: RegistrationWindow):
         self.login_view = login_view
         self.registration_view = registration_view
         self.main_view = main_view
+        self.new_chat_view = new_chat_view
 
         self.login_view.switch_to_registration.connect(self.show_registration)
         self.registration_view.switch_to_login.connect(self.show_login)
         self.main_view.logout_requested.connect(self.handle_logout)
+        self.main_view.new_chat.connect(self.show_new_chat_view)
+        self.new_chat_view.on_submit.connect(self.hide_new_chat_view)
 
     def show_login(self):
         self.main_view.hide()
@@ -37,6 +36,12 @@ class ViewManager:
     def handle_logout(self):
         self.main_view.hide()
         self.login_view.show()
+
+    def show_new_chat_view(self):
+        self.new_chat_view.show()
+
+    def hide_new_chat_view(self):
+        self.new_chat_view.hide()
 
 
 class RegistrationController(QObject):
@@ -101,10 +106,27 @@ class LoginController(QObject):
 
 
 class MainWindowController(QObject):
-    def __init__(self, model: ChatService, view: MainWindow):
+    def __init__(self, user: User, model: ChatService, view: MainWindow):
         super().__init__()
         self._model = model
         self._view = view
+        self._user = user
 
     def show(self):
         self._view.show()
+
+    def update_chat_list_in_view(self):
+        chat_objects = self._model.get_all_user_chats(user_id=self._user.id)
+        chats_for_view = [{'id': chat.id, 'title': chat.title}
+                          for chat in chat_objects]
+        self._view.update_chats_list(chats_for_view)
+
+    def handle_create_new_chat(self, chat_data: dict):
+        chat_title = chat_data['title']
+        if not chat_title:
+            print("Chat title cannot be empty.")
+            return
+        self._model.create_new_chat(
+            user_id=self._user.id, chat_title=chat_title)
+
+        self.update_chat_list_in_view()

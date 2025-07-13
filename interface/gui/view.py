@@ -1,12 +1,12 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout,
                              QPushButton, QLabel, QLineEdit, QFormLayout, QHBoxLayout, QFrame, QScrollArea)
 from PyQt6.QtCore import Qt, pyqtSignal
-import uuid
 
 
 class MainWindow(QMainWindow):
     logout_requested = pyqtSignal()
     chat_selected = pyqtSignal(str)
+    new_chat = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -24,6 +24,7 @@ class MainWindow(QMainWindow):
 
         self.welcome_label = QLabel("Welcome!")
         self.new_chat_button = QPushButton("+ New Chat")
+        self.new_chat_button.clicked.connect(self.new_chat.emit)
         self.logout_button = QPushButton("Logout")
         self.logout_button.clicked.connect(self.logout_requested.emit)
 
@@ -80,6 +81,66 @@ class MainWindow(QMainWindow):
 
             self.chats_layout.addWidget(button)
             self.chat_buttons[chat_id] = button
+
+
+class NewChatWindow(QMainWindow):
+    on_submit = pyqtSignal(dict)
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Create new chat")
+        self.setFixedSize(400, 200)
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+
+        outer_layout = QVBoxLayout(self.central_widget)
+        outer_layout.addStretch(1)
+        self.frame = QFrame()
+        self.frame.setStyleSheet("""
+            QFrame {
+                background-color: #f5f5f5;
+                border: 2px solid #cccccc;
+                border-radius: 10px;
+                padding: 20px;
+            }
+        """)
+        self.frame.setMaximumWidth(400)
+
+        frame_layout = QVBoxLayout(self.frame)
+
+        self.title_input = QLineEdit()
+        self.title_input.setPlaceholderText("Enter title")
+
+        form_layout = QFormLayout()
+
+        form_layout.addRow("Title:", self.title_input)
+
+        self.submit_button = QPushButton("Apply")
+        self.submit_button.setMaximumSize(150, 40)
+
+        button_layout = QHBoxLayout()
+        button_layout.addStretch(1)
+        button_layout.addWidget(self.submit_button)
+
+        frame_layout.addLayout(form_layout)
+        frame_layout.addLayout(button_layout)
+
+        frame_container = QHBoxLayout()
+        frame_container.addStretch(1)
+        frame_container.addWidget(self.frame)
+        frame_container.addStretch(1)
+
+        outer_layout.addLayout(frame_container)
+        outer_layout.addStretch(1)
+
+        self.submit_button.clicked.connect(self.apply)
+
+    def apply(self):
+        chat_data = {
+            "title": self.title_input.text(),
+        }
+        self.on_submit.emit(chat_data)
+        self.title_input.clear()
 
 
 class RegistrationWindow(QMainWindow):
