@@ -7,6 +7,7 @@ class MainWindow(QMainWindow):
     logout_requested = pyqtSignal()
     chat_selected = pyqtSignal(str)
     new_chat = pyqtSignal()
+    send_input = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -67,6 +68,18 @@ class MainWindow(QMainWindow):
         chat_layout.setContentsMargins(5, 5, 5, 5)
         chat_layout.setSpacing(10)
 
+        self.message_input = QLineEdit()
+        self.message_input.setPlaceholderText("Start typing a prompt")
+
+        self.send_button = QPushButton("Run")
+
+        bottom_layout = QHBoxLayout()
+        bottom_layout.addWidget(self.message_input)
+        bottom_layout.addWidget(self.send_button)
+        self.send_button.clicked.connect(self.send_prompt)
+
+        self.message_input.returnPressed.connect(self.send_prompt)
+
         for m in message_data:
             user_message = QLabel(f"<b>User:</b><br>{m['input']}")
             user_message.setWordWrap(True)
@@ -89,6 +102,10 @@ class MainWindow(QMainWindow):
         scroll_area.setStyleSheet("border: none;")
 
         self.right_panel_layout.addWidget(scroll_area)
+        self.right_panel_layout.addLayout(bottom_layout)
+
+    def send_prompt(self):
+        pass
 
     def update_chats_list(self, chats_data: list[dict]):
         while self.chats_layout.count():
