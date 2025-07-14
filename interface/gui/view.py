@@ -44,10 +44,10 @@ class MainWindow(QMainWindow):
         left_panel_layout.addWidget(self.logout_button)
 
         right_panel = QFrame()
-        right_panel_layout = QVBoxLayout(right_panel)
+        self.right_panel_layout = QVBoxLayout(right_panel)
         self.chat_info = QLabel("Select a chat to start or create a new one.")
         self.chat_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        right_panel_layout.addWidget(self.chat_info)
+        self.right_panel_layout.addWidget(self.chat_info)
 
         main_layout.addWidget(left_panel)
         main_layout.addWidget(right_panel)
@@ -56,6 +56,39 @@ class MainWindow(QMainWindow):
 
     def set_user_data(self, user_data: dict):
         self.welcome_label.setText(f"Welcome, {user_data['username']}!")
+
+    def show_chat(self, message_data: dict):
+        for i in reversed(range(self.right_panel_layout.count())):
+            widget_to_remove = self.right_panel_layout.itemAt(i).widget()
+            if widget_to_remove is not None:
+                widget_to_remove.setParent(None)
+        chat_container = QWidget()
+        chat_layout = QVBoxLayout(chat_container)
+        chat_layout.setContentsMargins(5, 5, 5, 5)
+        chat_layout.setSpacing(10)
+
+        for m in message_data:
+            user_message = QLabel(f"<b>User:</b><br>{m['input']}")
+            user_message.setWordWrap(True)
+            user_message.setStyleSheet(
+                "background-color: #e1f5fe; border-radius: 5px; padding: 5px;")
+
+            assistant_message = QLabel(f"<b>Assistant:</b><br>{m['output']}")
+            assistant_message.setWordWrap(True)
+            assistant_message.setStyleSheet(
+                "background-color: #f1f8e9; border-radius: 5px; padding: 5px;")
+
+            chat_layout.addWidget(user_message)
+            chat_layout.addWidget(assistant_message)
+
+        chat_layout.addStretch()
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setWidget(chat_container)
+        scroll_area.setStyleSheet("border: none;")
+
+        self.right_panel_layout.addWidget(scroll_area)
 
     def update_chats_list(self, chats_data: list[dict]):
         while self.chats_layout.count():
@@ -77,7 +110,7 @@ class MainWindow(QMainWindow):
             button = QPushButton(chat_title)
 
             button.clicked.connect(
-                lambda checked, chat_id=chat_id: self.chat_selected.emit(chat_id))
+                lambda _, cid=chat_id: self.chat_selected.emit(cid))
 
             self.chats_layout.addWidget(button)
             self.chat_buttons[chat_id] = button

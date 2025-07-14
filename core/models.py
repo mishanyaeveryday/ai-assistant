@@ -77,9 +77,19 @@ class Chat:
 
 
 class MessageHistory:
-    def __init__(self, id, user_input, assistant_output, chat_id, timestamp):
+    def __init__(self, id, input, output, chat_id, timestamp):
         self.id = id
-        self.input = user_input
-        self.output = assistant_output
+        self.input = input
+        self.output = output
         self.chat_id = chat_id
         self.timestamp = timestamp
+
+    @classmethod
+    def from_db_row(cls, row: dict):
+        return cls(
+            id=row['id'],
+            input=row['input'],
+            output=row['output'],
+            chat_id=row['chat_id'],
+            timestamp=row['timestamp']
+        )

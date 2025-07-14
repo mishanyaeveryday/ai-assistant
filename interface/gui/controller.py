@@ -1,7 +1,7 @@
 from PyQt6.QtCore import pyqtSignal, QObject
 from core.models import User
 from interface.gui.view import RegistrationWindow, LoginWindow, MainWindow, NewChatWindow
-from core.services import AuthService, ChatService
+from core.services import AuthService, ChatService, MessageService
 
 
 class ViewManager:
@@ -130,3 +130,23 @@ class MainWindowController(QObject):
             user_id=self._user.id, chat_title=chat_title)
 
         self.update_chat_list_in_view()
+
+
+class MessageController(QObject):
+    def __init__(self, model: MessageService, view: MainWindow):
+        super().__init__()
+        self._model = model
+        self._view = view
+
+        self._view.chat_selected.connect(self.show_messages)
+
+    def show_messages(self, chat_id):
+        messages = self._model.get_messages_from_chat(chat_id=chat_id)
+        message_data_for_view = []
+        for msg_obj in messages:
+            message_data_for_view.append({
+                'input': msg_obj.input,
+                'output': msg_obj.output
+            })
+
+        self._view.show_chat(message_data_for_view)

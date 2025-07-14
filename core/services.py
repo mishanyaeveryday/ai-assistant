@@ -1,6 +1,6 @@
 import bcrypt
-from core.models import User, Chat
-from db.database import User_DB, Chat_DB
+from core.models import User, Chat, MessageHistory
+from db.database import User_DB, Chat_DB, MessageHistory_DB
 
 
 class AuthService:
@@ -60,3 +60,16 @@ class ChatService:
 
     def create_new_chat(self, user_id: str, chat_title: str):
         self.chat_db.add_chat(title=chat_title, user_id=user_id)
+
+
+class MessageService:
+    def __init__(self, message_db: MessageHistory_DB):
+        self.message_db = message_db
+
+    def get_messages_from_chat(self, chat_id):
+        message_rows = self.message_db.get_messages_by_chat_id(chat_id=chat_id)
+
+        if not message_rows:
+            return []
+
+        return [MessageHistory.from_db_row(row) for row in message_rows]
