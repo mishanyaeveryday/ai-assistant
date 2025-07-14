@@ -308,15 +308,21 @@ class MessageHistory_DB:
             return [MessageHistory(*row) for row in rows]
         return []
 
-    def get_messages_from_chat(self, chat_id):
+    def get_messages_by_chat_id(self, chat_id):
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 'SELECT * FROM messages_history WHERE chat_id = ? ORDER BY timestamp', (chat_id,))
             rows = cursor.fetchall()
-        if rows:
-            return [MessageHistory(*row) for row in rows]
-        return []
+        if not rows:
+            return []
+
+        columns = [description[0]
+                   for description in cursor.description]
+
+        message_list = [dict(zip(columns, row)) for row in rows]
+
+        return message_list
 
     def get_last_message(self):
         with self._get_connection() as conn:
