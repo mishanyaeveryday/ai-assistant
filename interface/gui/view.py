@@ -7,7 +7,7 @@ class MainWindow(QMainWindow):
     logout_requested = pyqtSignal()
     chat_selected = pyqtSignal(str)
     new_chat = pyqtSignal()
-    send_input = pyqtSignal()
+    send_input = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
@@ -54,55 +54,60 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(right_panel)
 
         self.chat_buttons = {}
+        self.message_layout = None
+        self.chat_scroll_area = None
 
     def set_user_data(self, user_data: dict):
         self.welcome_label.setText(f"Welcome, {user_data['username']}!")
 
     def show_chat(self, message_data: dict):
         for i in reversed(range(self.right_panel_layout.count())):
-            widget_to_remove = self.right_panel_layout.itemAt(i).widget()
-            if widget_to_remove is not None:
-                widget_to_remove.setParent(None)
+            item = self.right_panel_layout.takeAt(i)
+            if item.widget():
+                item.widget().deleteLater()
+
         chat_container = QWidget()
-        chat_layout = QVBoxLayout(chat_container)
-        chat_layout.setContentsMargins(5, 5, 5, 5)
-        chat_layout.setSpacing(10)
-
-        self.message_input = QLineEdit()
-        self.message_input.setPlaceholderText("Start typing a prompt")
-
-        self.send_button = QPushButton("Run")
-
-        bottom_layout = QHBoxLayout()
-        bottom_layout.addWidget(self.message_input)
-        bottom_layout.addWidget(self.send_button)
-        self.send_button.clicked.connect(self.send_prompt)
-
-        self.message_input.returnPressed.connect(self.send_prompt)
-
+        self.messages_layout = QVBoxLayout(chat_container)
+        self.messages_layout.setContentsMargins(5, 5, 5, 5)
+        self.messages_layout.setSpacing(10)
+        self.messages_layout.setAlignment(
+            Qt.AlignmentFlag.AlignTop)
         for m in message_data:
-            user_message = QLabel(f"<b>User:</b><br>{m['input']}")
+            user_message = QLabel(f"<b>You:</b><br>{m['input']}")
             user_message.setWordWrap(True)
             user_message.setStyleSheet(
                 "background-color: #e1f5fe; border-radius: 5px; padding: 5px;")
+            user_message.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
             assistant_message = QLabel(f"<b>Assistant:</b><br>{m['output']}")
             assistant_message.setWordWrap(True)
             assistant_message.setStyleSheet(
                 "background-color: #f1f8e9; border-radius: 5px; padding: 5px;")
+            assistant_message.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
-            chat_layout.addWidget(user_message)
-            chat_layout.addWidget(assistant_message)
+            self.messages_layout.addWidget(user_message)
+            self.messages_layout.addWidget(assistant_message)
 
-        chat_layout.addStretch()
+        self.chat_scroll_area = QScrollArea()
+        self.chat_scroll_area.setWidgetResizable(True)
+        self.chat_scroll_area.setWidget(chat_container)
+        self.chat_scroll_area.setStyleSheet("border: none;")
 
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setWidget(chat_container)
-        scroll_area.setStyleSheet("border: none;")
+        self.message_input = QLineEdit()
+        self.message_input.setPlaceholderText("Start typing a prompt")
+        self.send_button = QPushButton("Run")
 
-        self.right_panel_layout.addWidget(scroll_area)
+        bottom_layout = QHBoxLayout()
+        bottom_layout.addWidget(self.message_input)
+        bottom_layout.addWidget(self.send_button)
+
+        self.send_button.clicked.connect(self.send_prompt)
+        self.message_input.returnPressed.connect(self.send_prompt)
+
+        self.right_panel_layout.addWidget(self.chat_scroll_area)
         self.right_panel_layout.addLayout(bottom_layout)
+
+        self.scroll_to_bottom()
 
     def send_prompt(self):
         pass
@@ -131,6 +136,11 @@ class MainWindow(QMainWindow):
 
             self.chats_layout.addWidget(button)
             self.chat_buttons[chat_id] = button
+
+    def scroll_to_bottom(self):
+        if self.chat_scroll_area:
+            self.chat_scroll_area.verticalScrollBar().setValue(
+                self.chat_scroll_area.verticalScrollBar().maximum())
 
 
 class NewChatWindow(QMainWindow):
