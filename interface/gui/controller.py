@@ -1,7 +1,7 @@
 from PyQt6.QtCore import pyqtSignal, QObject
 from core.models import User
 from interface.gui.view import RegistrationWindow, LoginWindow, MainWindow, NewChatWindow
-from core.services import AuthService, ChatService, MessageService
+from core.services import AuthService, ChatService, MessageService, AIClientService
 
 
 class ViewManager:
@@ -149,4 +149,35 @@ class MessageController(QObject):
                 'output': msg_obj.output
             })
 
-        self._view.show_chat(message_data_for_view)
+        self._view.show_chat(
+            chat_id=chat_id, message_data=message_data_for_view)
+
+
+class AIClientController(QObject):
+    def __init__(self, model: AIClientService, view: MainWindow):
+        super().__init__()
+        self._model = model
+        self._view = view
+
+        self._view.send_input.connect(self.handle_propmt)
+
+    def handle_propmt(self, chat_id, user_input):
+        try:
+            response_dict = self._model.ask(user_input)
+
+            if response_dict and 'output' in response_dict:
+                assistant_output = response_dict['output']
+
+                self._model.add_input_and_output(
+                    chat_id=chat_id,
+                    input=user_input,
+                    output=assistant_output
+                )
+
+                self._view.add_assistant_message(assistant_output)
+            else:
+                self._view.add_assistant_message(
+                    "Sorry, I received an invalid response.")
+
+        except Exception as e:
+            self._view.add_assistant_message(f"Sorry, an error occurred: {e}")
