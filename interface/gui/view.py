@@ -7,7 +7,7 @@ class MainWindow(QMainWindow):
     logout_requested = pyqtSignal()
     chat_selected = pyqtSignal(str)
     new_chat = pyqtSignal()
-    send_input = pyqtSignal(str)
+    send_input = pyqtSignal(str, str)
 
     def __init__(self):
         super().__init__()
@@ -56,11 +56,13 @@ class MainWindow(QMainWindow):
         self.chat_buttons = {}
         self.message_layout = None
         self.chat_scroll_area = None
+        self.current_chat_id = None
 
     def set_user_data(self, user_data: dict):
         self.welcome_label.setText(f"Welcome, {user_data['username']}!")
 
-    def show_chat(self, message_data: dict):
+    def show_chat(self, chat_id: str, message_data: dict):
+        self.current_chat_id = chat_id
         for i in reversed(range(self.right_panel_layout.count())):
             item = self.right_panel_layout.takeAt(i)
             if item.widget():
@@ -110,7 +112,30 @@ class MainWindow(QMainWindow):
         self.scroll_to_bottom()
 
     def send_prompt(self):
-        pass
+        prompt_text = self.message_input.text().strip()
+
+        if prompt_text and self.current_chat_id:
+            user_message = QLabel(f"<b>You:</b><br>{prompt_text}")
+            user_message.setWordWrap(True)
+            user_message.setStyleSheet(
+                "background-color: #e1f5fe; border-radius: 5px; padding: 5px;")
+            user_message.setAlignment(Qt.AlignmentFlag.AlignLeft)
+            self.messages_layout.addWidget(user_message)
+            self.scroll_to_bottom()
+
+            self.send_input.emit(self.current_chat_id, prompt_text)
+
+            self.message_input.clear()
+
+    def add_assistant_message(self, text: str):
+        if self.messages_layout is not None:
+            assistant_message = QLabel(f"<b>Assistant:</b><br>{text}")
+            assistant_message.setWordWrap(True)
+            assistant_message.setStyleSheet(
+                "background-color: #f1f8e9; border-radius: 5px; padding: 5px;")
+            assistant_message.setAlignment(Qt.AlignmentFlag.AlignLeft)
+            self.messages_layout.addWidget(assistant_message)
+            self.scroll_to_bottom()
 
     def update_chats_list(self, chats_data: list[dict]):
         while self.chats_layout.count():

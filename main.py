@@ -3,10 +3,10 @@ from PyQt6.QtWidgets import QApplication
 
 from db.database import Chat_DB, MessageHistory_DB, User_DB
 from core.models import User
-from core.services import AuthService, ChatService, MessageService
+from core.services import AuthService, ChatService, MessageService, AIClientService
 
 from interface.gui.view import RegistrationWindow, LoginWindow, MainWindow, NewChatWindow
-from interface.gui.controller import RegistrationController, LoginController, MainWindowController, ViewManager, MessageController
+from interface.gui.controller import RegistrationController, LoginController, MainWindowController, ViewManager, MessageController, AIClientController
 
 
 def start_gui():
@@ -24,6 +24,8 @@ def start_gui():
     auth_model = AuthService(user_db=user_db_instance)
     chat_model = ChatService(chat_db=chat_db_instance)
     message_model = MessageService(message_db=message_history_db_instance)
+    ai_model = AIClientService(message_db=message_history_db_instance)
+
     # Views
     main_view = MainWindow()
     new_chat_window = NewChatWindow()
@@ -41,6 +43,8 @@ def start_gui():
         model=auth_model, view=login_view)
 
     message_controller = MessageController(model=message_model, view=main_view)
+
+    ai_controller = AIClientController(model=ai_model, view=main_view)
 
     main_window_controller = None
 

@@ -1,6 +1,7 @@
 import bcrypt
 from core.models import User, Chat, MessageHistory
 from db.database import User_DB, Chat_DB, MessageHistory_DB
+from agent.ai_client import AIClient
 
 
 class AuthService:
@@ -73,3 +74,13 @@ class MessageService:
             return []
 
         return [MessageHistory.from_db_row(row) for row in message_rows]
+
+
+class AIClientService(AIClient):
+    def __init__(self, message_db: MessageHistory_DB, model='llama3-70b-8192'):
+        super().__init__(model)
+        self.message_db = message_db
+
+    def add_input_and_output(self, chat_id, input, output):
+        self.message_db.add_message(
+            chat_id=chat_id, user_input=input, assistant_output=output)
