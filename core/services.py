@@ -81,6 +81,10 @@ class AIClientService(AIClient):
         super().__init__(model)
         self.message_db = message_db
 
-    def add_input_and_output(self, chat_id, input, output):
-        self.message_db.add_message(
-            chat_id=chat_id, user_input=input, assistant_output=output)
+    def record_input(self, chat_id, input):
+        id = self.message_db.add_input(chat_id=chat_id, user_input=input)
+        return id
+
+    def record_output(self, id, chat_id, output):
+        self.message_db.add_output(
+            message_history_id=id, chat_id=chat_id, assistant_output=output)
