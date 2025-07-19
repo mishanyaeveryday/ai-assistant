@@ -159,20 +159,21 @@ class AIClientController(QObject):
         self._model = model
         self._view = view
 
-        self._view.send_input.connect(self.handle_propmt)
+        self._view.send_input.connect(self.handle_prompt)
 
-    def handle_propmt(self, chat_id, user_input):
+    def handle_prompt(self, chat_id, user_input):
         try:
             response_dict = self._model.ask(user_input)
+            message_history_id = self._model.record_input(
+                chat_id=chat_id,
+                input=user_input
+            )
 
             if response_dict and 'output' in response_dict:
                 assistant_output = response_dict['output']
 
-                self._model.add_input_and_output(
-                    chat_id=chat_id,
-                    input=user_input,
-                    output=assistant_output
-                )
+                self._model.record_output(
+                    id=message_history_id, chat_id=chat_id, output=assistant_output)
 
                 self._view.add_assistant_message(assistant_output)
             else:

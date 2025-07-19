@@ -334,7 +334,7 @@ class MessageHistory_DB:
             return MessageHistory(*row)
         return None
 
-    def add_message(self, chat_id, user_input=None, assistant_output=None):
+    def add_input_and_output(self, chat_id, user_input=None, assistant_output=None):
         with self._get_connection() as conn:
             cursor = conn.cursor()
             id = str(uuid.uuid4())
@@ -349,6 +349,34 @@ class MessageHistory_DB:
                 conn.commit()
             except sqlite3.IntegrityError:
                 raise ValueError("Message with this ID already exists.")
+
+    def add_input(self, chat_id, user_input):
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            id = str(uuid.uuid4())
+            timestamp = datetime.now().isoformat()
+            try:
+                cursor.execute("""
+                INSERT INTO messages_history (id, input, chat_id, timestamp)
+                VALUES (?,?,?,?)
+    """, (id, user_input, chat_id, timestamp))
+                conn.commit()
+            except sqlite3.IntegrityError:
+                raise ValueError("Message with this ID already exists.")
+        return id
+
+    def add_output(self, message_history_id, chat_id, assistant_output):
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            timestamp = datetime.now().isoformat()
+            assistant_output_str = json.dumps(
+                assistant_output) if assistant_output is not None else None
+            cursor.execute("""
+            UPDATE messages_history
+            SET output = ?, chat_id = ?, timestamp = ?
+            WHERE id = ?
+    """, (assistant_output_str, chat_id, timestamp, message_history_id,))
+            conn.commit()
 
     def edit_message(self, id, user_input, assistant_output):
         with self._get_connection() as conn:
