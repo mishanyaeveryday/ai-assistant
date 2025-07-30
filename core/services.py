@@ -1,7 +1,9 @@
 import bcrypt
 from core.models import User, Chat, MessageHistory
 from db.database import User_DB, Chat_DB, MessageHistory_DB
-from agent.ai_client import AIClient
+from langchain.memory import ConversationSummaryBufferMemory
+from langchain_groq import ChatGroq
+from config.settings import GROQ_API_KEY
 
 
 class AuthService:
@@ -76,10 +78,16 @@ class MessageService:
         return [MessageHistory.from_db_row(row) for row in message_rows]
 
 
-class AIClientService(AIClient):
+class AIClientService():
     def __init__(self, message_db: MessageHistory_DB, model='llama3-70b-8192'):
-        super().__init__(model)
+        self.model_name = model
         self.message_db = message_db
+
+        self.llm_for_summarization = ChatGroq(
+            model_name=model,
+            temperature=0,
+            api_key=GROQ_API_KEY
+        )
 
     def record_input(self, chat_id, input):
         id = self.message_db.add_input(chat_id=chat_id, user_input=input)
@@ -88,3 +96,30 @@ class AIClientService(AIClient):
     def record_output(self, id, chat_id, output):
         self.message_db.add_output(
             message_history_id=id, chat_id=chat_id, assistant_output=output)
+
+    def record_conversation(self, chat_id, input, output):
+        self.message_db.add_input_and_output(
+            chat_id=chat_id, user_input=input, assistant_output=output)
+
+    def load_memory_for_chat(self, chat_id):
+        message_history = self.message_db.get_messages_by_chat_id(
+            chat_id=chat_id)
+
+        memory = ConversationSummaryBufferMemory(
+            llm=self.llm_for_summarization,
+            max_token_limit=2000,
+            memory_key="chat_history",
+            return_messages=True
+        )
+
+        for msg in message_history:
+            user_message = msg.get('input')
+            ai_message = msg.get('output')
+
+            if user_message:
+                memory.chat_memory.add_user_message(user_message)
+
+            if ai_message:
+                memory.chat_memory.add_ai_message(ai_message)
+
+        return memory
