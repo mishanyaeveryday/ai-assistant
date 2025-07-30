@@ -2,6 +2,8 @@ from PyQt6.QtCore import pyqtSignal, QObject
 from core.models import User
 from interface.gui.view import RegistrationWindow, LoginWindow, MainWindow, NewChatWindow
 from core.services import AuthService, ChatService, MessageService, AIClientService
+from agent.ai_client import AIClient
+from langchain.memory import ConversationBufferMemory
 
 
 class ViewManager:
@@ -163,17 +165,18 @@ class AIClientController(QObject):
 
     def handle_prompt(self, chat_id, user_input):
         try:
-            response_dict = self._model.ask(user_input)
-            message_history_id = self._model.record_input(
-                chat_id=chat_id,
-                input=user_input
-            )
+            memory = self._model.load_memory_for_chat(chat_id=chat_id)
+
+            ai_client = AIClient(memory=memory, model=self._model.model_name)
+
+            response_dict = ai_client.ask(user_input=user_input)
 
             if response_dict and 'output' in response_dict:
                 assistant_output = response_dict['output']
 
-                self._model.record_output(
-                    id=message_history_id, chat_id=chat_id, output=assistant_output)
+                self._model.record_conversation(
+                    chat_id=chat_id, input=user_input, output=assistant_output
+                )
 
                 self._view.add_assistant_message(assistant_output)
             else:
