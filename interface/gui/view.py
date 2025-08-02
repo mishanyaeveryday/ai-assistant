@@ -111,6 +111,10 @@ class MainWindow(QMainWindow):
 
         self.scroll_to_bottom()
 
+    def set_input_enabled(self, enabled: bool):
+        self.send_button.setEnabled(enabled)
+        self.message_input.setEnabled(enabled)
+
     def send_prompt(self):
         prompt_text = self.message_input.text().strip()
 
