@@ -1,9 +1,9 @@
-from PyQt6.QtCore import pyqtSignal, QObject
+from PyQt6.QtCore import pyqtSignal, QObject, QThread
 from core.models import User
 from interface.gui.view import RegistrationWindow, LoginWindow, MainWindow, NewChatWindow
 from core.services import AuthService, ChatService, MessageService, AIClientService
 from agent.ai_client import AIClient
-from langchain.memory import ConversationBufferMemory
+from interface.gui.worker import AIWorker
 
 
 class ViewManager:
@@ -164,12 +164,31 @@ class AIClientController(QObject):
         self._view.send_input.connect(self.handle_prompt)
 
     def handle_prompt(self, chat_id, user_input):
+        self._view.set_input_enabled(False)
+
+        self.thread = QThread()
+        self.worker = AIWorker(self._model, chat_id, user_input)
+
+        self.worker.moveToThread(self.thread)
+
+        self.thread.started.connect(self.worker.run)
+
+        self.worker.finished.connect(self.handle_ai_response)
+
+        self.worker.error.connect(self.handle_ai_error)
+
+        self.worker.finished.connect(self.thread.quit)
+        self.worker.finished.connect(self.worker.deleteLater)
+        self.thread.finished.connect(self.thread.deleteLater)
+
+        self.thread.start()
+
+    def handle_ai_response(self, response_dict):
+        self._view.set_input_enabled(True)
+
         try:
-            memory = self._model.load_memory_for_chat(chat_id=chat_id)
-
-            ai_client = AIClient(memory=memory, model=self._model.model_name)
-
-            response_dict = ai_client.ask(user_input=user_input)
+            user_input = self.worker.user_input
+            chat_id = self.worker.chat_id
 
             if response_dict and 'output' in response_dict:
                 assistant_output = response_dict['output']
@@ -177,11 +196,15 @@ class AIClientController(QObject):
                 self._model.record_conversation(
                     chat_id=chat_id, input=user_input, output=assistant_output
                 )
-
                 self._view.add_assistant_message(assistant_output)
             else:
                 self._view.add_assistant_message(
                     "Sorry, I received an invalid response.")
-
         except Exception as e:
-            self._view.add_assistant_message(f"Sorry, an error occurred: {e}")
+            self.handle_ai_error(f"Error processing response: {e}")
+
+    def handle_ai_error(self, error_message):
+        self._view.set_input_enabled(True)
+
+        self._view.add_assistant_message(
+            f"Sorry, an error occurred: {error_message}")
