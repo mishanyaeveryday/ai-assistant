@@ -77,12 +77,16 @@ class MainWindow(QMainWindow):
         for m in message_data:
             user_message = QLabel(f"<b>You:</b><br>{m['input']}")
             user_message.setWordWrap(True)
+            user_message.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse)
             user_message.setStyleSheet(
                 "background-color: #e1f5fe; border-radius: 5px; padding: 5px;")
             user_message.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
             assistant_message = QLabel(f"<b>Assistant:</b><br>{m['output']}")
             assistant_message.setWordWrap(True)
+            assistant_message.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse)
             assistant_message.setStyleSheet(
                 "background-color: #f1f8e9; border-radius: 5px; padding: 5px;")
             assistant_message.setAlignment(Qt.AlignmentFlag.AlignLeft)
@@ -121,6 +125,8 @@ class MainWindow(QMainWindow):
         if prompt_text and self.current_chat_id:
             user_message = QLabel(f"<b>You:</b><br>{prompt_text}")
             user_message.setWordWrap(True)
+            user_message.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse)
             user_message.setStyleSheet(
                 "background-color: #e1f5fe; border-radius: 5px; padding: 5px;")
             user_message.setAlignment(Qt.AlignmentFlag.AlignLeft)
@@ -135,6 +141,8 @@ class MainWindow(QMainWindow):
         if self.messages_layout is not None:
             assistant_message = QLabel(f"<b>Assistant:</b><br>{text}")
             assistant_message.setWordWrap(True)
+            assistant_message.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse)
             assistant_message.setStyleSheet(
                 "background-color: #f1f8e9; border-radius: 5px; padding: 5px;")
             assistant_message.setAlignment(Qt.AlignmentFlag.AlignLeft)
