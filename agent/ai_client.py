@@ -1,6 +1,6 @@
 from langchain_groq import ChatGroq
 from langchain import hub
-from langchain.agents import AgentExecutor, create_react_agent
+from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain.memory import ConversationBufferMemory
 from tools.docx_tool import create_docx
 from tools.web_search import web_searching
@@ -17,9 +17,10 @@ class AIClient:
         )
 
         tools = [create_docx, web_searching]
-        prompt = hub.pull("hwchase17/react-chat")
 
-        agent = create_react_agent(
+        prompt = hub.pull("hwchase17/openai-functions-agent")
+
+        agent = create_tool_calling_agent(
             llm=self.llm,
             tools=tools,
             prompt=prompt,
@@ -34,4 +35,7 @@ class AIClient:
         )
 
     def ask(self, user_input: str) -> str:
-        return self.agent_executor.invoke({'input': user_input})
+        return self.agent_executor.invoke({
+            'input': user_input,
+            'chat_history': self.memory.chat_memory.messages
+        })
