@@ -4,19 +4,24 @@ from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain.memory import ConversationBufferMemory
 from tools.docx_tool import create_docx
 from tools.web_search import web_searching
-from config.settings import GROQ_API_KEY
+from tools.code_interpreter import CodeGenerator, DockerCodeInterpreter, LocalCodeInterpreter
+from config.settings import GROQ_API_KEY, GROQ_MODEL
 
 
 class AIClient:
-    def __init__(self, memory: ConversationBufferMemory, model='llama3-70b-8192'):
+    def __init__(self, memory: ConversationBufferMemory, model=GROQ_MODEL):
         self.memory = memory
         self.llm = ChatGroq(
-            model_name=model,
+            model=model,
             temperature=0,
             api_key=GROQ_API_KEY
         )
 
-        tools = [create_docx, web_searching]
+        code_generator_tool = CodeGenerator(llm=self.llm)
+        docker_code_interpreter_tool = DockerCodeInterpreter()
+        local_code_interpreter_tool = LocalCodeInterpreter()
+        tools = [code_generator_tool,
+                 local_code_interpreter_tool]
 
         prompt = hub.pull("hwchase17/openai-functions-agent")
 
@@ -24,6 +29,7 @@ class AIClient:
             llm=self.llm,
             tools=tools,
             prompt=prompt,
+
         )
 
         self.agent_executor = AgentExecutor(

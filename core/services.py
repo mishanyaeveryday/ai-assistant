@@ -3,7 +3,7 @@ from core.models import User, Chat, MessageHistory
 from db.database import User_DB, Chat_DB, MessageHistory_DB
 from langchain.memory import ConversationSummaryBufferMemory
 from langchain_groq import ChatGroq
-from config.settings import GROQ_API_KEY
+from config.settings import GROQ_API_KEY, GROQ_MODEL
 
 
 class AuthService:
@@ -79,7 +79,7 @@ class MessageService:
 
 
 class AIClientService():
-    def __init__(self, message_db: MessageHistory_DB, model='llama3-70b-8192'):
+    def __init__(self, message_db: MessageHistory_DB, model=GROQ_MODEL):
         self.model_name = model
         self.message_db = message_db
 

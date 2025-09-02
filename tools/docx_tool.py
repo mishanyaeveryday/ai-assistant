@@ -31,7 +31,6 @@ def create_docx(
     Creates a new Word document (.docx) with a title, paragraphs, and optionally a table and an image. 
     Use this tool to save structured text, reports, or summaries into a file.
     """
-    # Создание документа
     document = Document()
 
     if title:
