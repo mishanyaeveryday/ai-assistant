@@ -1,1 +1,0 @@
-# Launch applications, manage windows
