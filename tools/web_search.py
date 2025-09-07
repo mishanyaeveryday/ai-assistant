@@ -9,7 +9,7 @@ search = TavilySearchResults(api_key=TAVILY_API_KEY)
 @tool(
     description="Use this tool to search the internet for recent or factual information when user asks about current events or general knowledge."
 )
-def web_searching(query: str) -> str:
+def web_searching_tool(query: str) -> str:
     """
     Use this tool to search for current events or general knowledge online.
     """

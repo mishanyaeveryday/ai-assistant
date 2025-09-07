@@ -16,7 +16,7 @@ class AIWorker(QObject):
         try:
             memory = self._model.load_memory_for_chat(chat_id=self.chat_id)
 
-            ai_client = AIClient(memory=memory, model=self._model.model_name)
+            ai_client = AIClient(memory=memory, model=self._model.model)
 
             response_dict = ai_client.ask(user_input=self.user_input)
 

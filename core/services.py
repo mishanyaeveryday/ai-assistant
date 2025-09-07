@@ -3,7 +3,8 @@ from core.models import User, Chat, MessageHistory
 from db.database import User_DB, Chat_DB, MessageHistory_DB
 from langchain.memory import ConversationSummaryBufferMemory
 from langchain_groq import ChatGroq
-from config.settings import GROQ_API_KEY, GROQ_MODEL
+from config.settings import GROQ_API_KEY, GROQ_MODEL, GENAI_API_KEY, GENAI_MODEL
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 
 class AuthService:
@@ -79,14 +80,14 @@ class MessageService:
 
 
 class AIClientService():
-    def __init__(self, message_db: MessageHistory_DB, model=GROQ_MODEL):
-        self.model_name = model
+    def __init__(self, message_db: MessageHistory_DB, model=GENAI_MODEL):
+        self.model = model
         self.message_db = message_db
 
-        self.llm_for_summarization = ChatGroq(
-            model_name=model,
+        self.llm_for_summarization = ChatGoogleGenerativeAI(
+            model=model,
             temperature=0,
-            api_key=GROQ_API_KEY
+            api_key=GENAI_API_KEY
         )
 
     def record_input(self, chat_id, input):
