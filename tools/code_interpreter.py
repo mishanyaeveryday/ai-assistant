@@ -7,7 +7,7 @@ from pathlib import Path
 import docker
 from langchain_groq import ChatGroq
 from langchain_google_genai.chat_models import ChatGoogleGenerativeAI
-from config.settings import GENAI_MODEL
+from config.settings import GENAI_MODEL, DOCKER_CONTAINER
 from typing import Optional
 from pydantic import Field, BaseModel
 from typing import Type
@@ -27,7 +27,7 @@ Here are your STRICT instructions:
 - Make sure all the imports are always there to perform the task.
 - At the end of the generated code, always include a line to run the generated function.
 - The code should print output in a human-readable and understandable format.
-- For any file you create (Word, text, CSV, images, etc.), always save it inside the /app directory. 
+- For any file you create (Word, text, CSV, images, etc.), always save it inside the /app directory.
 - Prepend /app/ to the filename to ensure it is saved in the correct location accessible from the host.
 - If you are generating charts, graphs or anything visual, convert them to image and save it to the /app location and return as well as print just the name of the image file without path.
 """
@@ -65,24 +65,38 @@ class CodeGenerator(BaseTool):
         return code
 
     def _get_code_group(self, raw_code: str) -> str | bool:
-        """Extracts Python code from a markdown-formatted LLM response.
+        # """Extracts Python code from a markdown-formatted LLM response.
 
-        Args:
-            llm_response: A string containing the full response from the LLM, potentially
-                containing Python code blocks.
+        # Args:
+        #     llm_response: A string containing the full response from the LLM, potentially
+        #         containing Python code blocks.
 
-        Returns:
-            str: The extracted Python code if found.
-            bool: False if no Python code block is found.
-        """
-        code = re.sub(r"^```(?:python)?", "",
-                      raw_code.strip(), flags=re.MULTILINE)
-        code = re.sub(r"```$", "", code.strip(), flags=re.MULTILINE)
+        # Returns:
+        #     str: The extracted Python code if found.
+        #     bool: False if no Python code block is found.
+        # """
+        # # code = re.sub(r"^```(?:python)?", "",
+        # #               raw_code.strip(), flags=re.MULTILINE)
+        # # code = re.sub(r"```$", "", code.strip(), flags=re.MULTILINE)
 
-        # 2. Убираем placeholder вида <generated_code_from_code_generator>
+        # # 2. Убираем placeholder вида <generated_code_from_code_generator>
+        # code = re.sub(r"<.*?>", "", code)
+        text = raw_code.strip()
+
+        # Находим начало и конец блока с кодом
+        first_point = re.search(
+            r"^```(?:python)?", text, flags=re.MULTILINE)
+        second_point = re.search(r"```$", text, flags=re.MULTILINE)
+
+        if first_point and second_point and first_point.end() < second_point.start():
+            code = text[first_point.end():second_point.start()]
+        else:
+            code = text  # если нет блоков — возвращаем как есть
+
+        # Убираем placeholder вида <generated_code_from_code_generator>
         code = re.sub(r"<.*?>", "", code)
-
-        return code.strip()
+        code = code.strip()
+        return code if code else False
 
 
 class CodeInterpreterInput(BaseModel):
@@ -109,24 +123,32 @@ class DockerCodeInterpreter(BaseTool):
     name: str = 'docker-code-interpreter'
     description: str = "Use this tool to execute a given string of Python code in a secure sandboxed environment. The input MUST be valid Python code, so before using this tool you need to use code_generator tool."
     args_schema: Type[BaseModel] = CodeInterpreterInput
+    host_dir: Path = Field(default_factory=lambda: Path(
+        __file__).resolve().parent / "files")
+
+    def __init__(self, host_dir: Path | None = None, **kwargs):
+        super().__init__(**kwargs)
+        self.host_dir = host_dir or (Path(__file__).resolve().parent / "files")
+        self.host_dir.mkdir(exist_ok=True)
 
     def _run(self, code: str) -> str:
         print('CODE INTERPRETER TOOL')
 
-        project_dir = Path(__file__).resolve().parent
-        host_dir = project_dir / "files"
-        host_dir.mkdir(exist_ok=True)
-        script_path = host_dir / "main.py"
+        script_path = self.host_dir / "main.py"
         script_path.write_text(code, encoding="utf-8")
 
-        print(f"--- [Executor] Sandbox directory created at: {host_dir} ---")
+        print(
+            f"--- [Executor] Sandbox directory created at: {self.host_dir} ---")
 
+        return self.run_docker_container(self.host_dir)
+
+    def run_docker_container(self, dir):
         client = docker.from_env()
         try:
             container = client.containers.run(
-                'code_interpreter:latest',
+                DOCKER_CONTAINER,
                 command="python /app/main.py",
-                volumes={str(host_dir.resolve()): {
+                volumes={str(dir.resolve()): {
                     'bind': '/app', 'mode': 'rw'}},
                 remove=True,
                 stderr=True,
@@ -136,9 +158,9 @@ class DockerCodeInterpreter(BaseTool):
 
             # После выполнения проверяем, какие файлы появились в папке
             created_files = [
-                f.name for f in host_dir.iterdir() if f.name != 'main.py']
+                f.name for f in dir.iterdir() if f.name != 'main.py']
             if created_files:
-                return f"Execution successful. Created files: {', '.join(created_files)}. Find them at {host_dir}"
+                return f"Execution successful. Created files: {', '.join(created_files)}. Find them at {dir}"
             else:
                 return f"Execution successful. Output:\n{output}"
 
