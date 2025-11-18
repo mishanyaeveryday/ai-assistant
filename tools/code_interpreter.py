@@ -5,14 +5,11 @@ import os
 import tempfile
 from pathlib import Path
 import docker
-from langchain_groq import ChatGroq
-from langchain_google_genai.chat_models import ChatGoogleGenerativeAI
+# from langchain_google_genai.chat_models import ChatGoogleGenerativeAI
 from config.settings import GENAI_MODEL, DOCKER_CONTAINER
 from typing import Optional
 from pydantic import Field, BaseModel
 from typing import Type
-from langchain.tools import BaseTool
-from langchain_core.messages import SystemMessage, HumanMessage
 
 CODE_GENERATION_SYSTEM_PROMPT = """
 You are an intelligent AI agent designed to generate accurate python3 code and you SHOULD to use tool generate_code
@@ -42,19 +39,17 @@ class CodeGeneratorInput(BaseModel):
         "The description must be explicit enough so another developer could write the code directly.")
 
 
-class CodeGenerator(BaseTool):
+class CodeGenerator:
     name: str = "code-generator"
     description: str = "Useful when you need to generate python code"
     args_schema: Type[BaseModel] = CodeGeneratorInput
     llm: Optional[ChatGoogleGenerativeAI] = None
 
-    def __init__(self, llm: ChatGoogleGenerativeAI = None, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, llm: ChatGoogleGenerativeAI = None):
         if llm is None:
-            llm = ChatGoogleGenerativeAI(model=GENAI_MODEL)
-        object.__setattr__(self, 'llm', llm)
+            self.llm = llm or ChatGoogleGenerativeAI(model=GENAI_MODEL)
 
-    def _run(self, query):
+    def run(self, query):
         print('CODE GENERATOR TOOL')
         messages = [SystemMessage(CODE_GENERATION_SYSTEM_PROMPT),
                     HumanMessage(query)]
@@ -65,25 +60,8 @@ class CodeGenerator(BaseTool):
         return code
 
     def _get_code_group(self, raw_code: str) -> str | bool:
-        # """Extracts Python code from a markdown-formatted LLM response.
-
-        # Args:
-        #     llm_response: A string containing the full response from the LLM, potentially
-        #         containing Python code blocks.
-
-        # Returns:
-        #     str: The extracted Python code if found.
-        #     bool: False if no Python code block is found.
-        # """
-        # # code = re.sub(r"^```(?:python)?", "",
-        # #               raw_code.strip(), flags=re.MULTILINE)
-        # # code = re.sub(r"```$", "", code.strip(), flags=re.MULTILINE)
-
-        # # 2. Убираем placeholder вида <generated_code_from_code_generator>
-        # code = re.sub(r"<.*?>", "", code)
         text = raw_code.strip()
 
-        # Находим начало и конец блока с кодом
         first_point = re.search(
             r"^```(?:python)?", text, flags=re.MULTILINE)
         second_point = re.search(r"```$", text, flags=re.MULTILINE)
@@ -91,9 +69,8 @@ class CodeGenerator(BaseTool):
         if first_point and second_point and first_point.end() < second_point.start():
             code = text[first_point.end():second_point.start()]
         else:
-            code = text  # если нет блоков — возвращаем как есть
+            code = text
 
-        # Убираем placeholder вида <generated_code_from_code_generator>
         code = re.sub(r"<.*?>", "", code)
         code = code.strip()
         return code if code else False
@@ -119,19 +96,18 @@ class CodeInterpreterInput(BaseModel):
 #         return isCorrect
 
 
-class DockerCodeInterpreter(BaseTool):
+class DockerCodeInterpreter:
     name: str = 'docker-code-interpreter'
     description: str = "Use this tool to execute a given string of Python code in a secure sandboxed environment. The input MUST be valid Python code, so before using this tool you need to use code_generator tool."
     args_schema: Type[BaseModel] = CodeInterpreterInput
     host_dir: Path = Field(default_factory=lambda: Path(
         __file__).resolve().parent / "files")
 
-    def __init__(self, host_dir: Path | None = None, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, host_dir: Path | None = None):
         self.host_dir = host_dir or (Path(__file__).resolve().parent / "files")
         self.host_dir.mkdir(exist_ok=True)
 
-    def _run(self, code: str) -> str:
+    def run(self, code: str) -> str:
         print('CODE INTERPRETER TOOL')
 
         script_path = self.host_dir / "main.py"
@@ -156,7 +132,6 @@ class DockerCodeInterpreter(BaseTool):
             )
             output = container.decode("utf-8")
 
-            # После выполнения проверяем, какие файлы появились в папке
             created_files = [
                 f.name for f in dir.iterdir() if f.name != 'main.py']
             if created_files:
