@@ -1,4 +1,6 @@
+from langchain.tools.tavily_search import TavilySearchResults
 from config.settings import TAVILY_API_KEY
+from langchain.tools import tool
 
 
 search = TavilySearchResults(api_key=TAVILY_API_KEY)

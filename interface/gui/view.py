@@ -1,13 +1,13 @@
-from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout,
-                             QPushButton, QLabel, QLineEdit, QFormLayout, QHBoxLayout, QFrame, QScrollArea)
-from PyQt6.QtCore import Qt, pyqtSignal
+from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout,
+                               QPushButton, QLabel, QLineEdit, QFormLayout, QHBoxLayout, QFrame, QScrollArea)
+from PySide6.QtCore import Qt, Signal
 
 
 class MainWindow(QMainWindow):
-    logout_requested = pyqtSignal()
-    chat_selected = pyqtSignal(str)
-    new_chat = pyqtSignal()
-    send_input = pyqtSignal(str, str)
+    logout_requested = Signal()
+    chat_selected = Signal(str)
+    new_chat = Signal()
+    send_input = Signal(str, str)
 
     def __init__(self):
         super().__init__()
@@ -181,7 +181,7 @@ class MainWindow(QMainWindow):
 
 
 class NewChatWindow(QMainWindow):
-    on_submit = pyqtSignal(dict)
+    on_submit = Signal(dict)
 
     def __init__(self):
         super().__init__()
@@ -242,8 +242,8 @@ class NewChatWindow(QMainWindow):
 
 class RegistrationWindow(QMainWindow):
 
-    registration_submitted = pyqtSignal(dict)
-    switch_to_login = pyqtSignal()
+    registration_submitted = Signal(dict)
+    switch_to_login = Signal()
 
     def __init__(self):
         super().__init__()
@@ -340,8 +340,8 @@ class RegistrationWindow(QMainWindow):
 
 
 class LoginWindow(QMainWindow):
-    login_submitted = pyqtSignal(dict)
-    switch_to_registration = pyqtSignal()
+    login_submitted = Signal(dict)
+    switch_to_registration = Signal()
 
     def __init__(self):
         super().__init__()

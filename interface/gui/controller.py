@@ -1,9 +1,11 @@
-from PyQt6.QtCore import pyqtSignal, QObject, QThread
+from PySide6.QtCore import Signal, QObject
 from core.models import User
 from interface.gui.view import RegistrationWindow, LoginWindow, MainWindow, NewChatWindow
 from core.services import AuthService, ChatService, MessageService, AIClientService
 from agent.ai_client import AIClient
 from interface.gui.worker import AIWorker
+from agent.mcp_client import MCPClient
+import asyncio
 
 
 class ViewManager:
@@ -78,7 +80,7 @@ class RegistrationController(QObject):
 
 
 class LoginController(QObject):
-    login_successful = pyqtSignal(User)
+    login_successful = Signal(User)
 
     def __init__(self, model: AuthService, view: LoginWindow):
         super().__init__()
@@ -156,32 +158,25 @@ class MessageController(QObject):
 
 
 class AIClientController(QObject):
-    def __init__(self, model: AIClientService, view: MainWindow):
+    def __init__(self, model: AIClientService, view: MainWindow, mcp_client: MCPClient):
         super().__init__()
         self._model = model
         self._view = view
-
+        self._mcp_client = mcp_client
         self._view.send_input.connect(self.handle_prompt)
 
     def handle_prompt(self, chat_id, user_input):
         self._view.set_input_enabled(False)
 
-        self.thread = QThread()
-        self.worker = AIWorker(self._model, chat_id, user_input)
-
-        self.worker.moveToThread(self.thread)
-
-        self.thread.started.connect(self.worker.run)
+        self.worker = AIWorker(self._model, chat_id,
+                               user_input, mcp_client=self._mcp_client)
 
         self.worker.finished.connect(self.handle_ai_response)
 
         self.worker.error.connect(self.handle_ai_error)
 
-        self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
-        self.thread.finished.connect(self.thread.deleteLater)
-
-        self.thread.start()
+        asyncio.create_task(self.worker.run())
 
     def handle_ai_response(self, response_dict):
         self._view.set_input_enabled(True)

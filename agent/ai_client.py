@@ -1,21 +1,24 @@
-from tools.web_search import web_searching_tool
 from tools.code_interpreter import CodeGenerator, DockerCodeInterpreter
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain import hub
+
+from langchain.memory import ConversationBufferMemory
+
+from langchain_google_genai import ChatGoogleGenerativeAI
+
 from config.settings import GROQ_API_KEY, GROQ_MODEL, GENAI_API_KEY, GENAI_MODEL
+
+from agent.mcp_client import MCPClient
 
 
 class AIClient:
-    def __init__(self, memory: ConversationBufferMemory, model=GENAI_MODEL):
+    def __init__(self, memory: ConversationBufferMemory, tools, model=GENAI_MODEL):
         self.memory = memory
         self.llm = ChatGoogleGenerativeAI(
             model=model,
             temperature=0,
             api_key=GENAI_API_KEY
         )
-
-        code_generator_tool = CodeGenerator(llm=self.llm)
-        docker_code_interpreter_tool = DockerCodeInterpreter()
-        tools = [web_searching_tool, code_generator_tool,
-                 docker_code_interpreter_tool]
 
         prompt = hub.pull("hwchase17/openai-functions-agent")
 
@@ -34,8 +37,9 @@ class AIClient:
             handle_parsing_errors=True,
         )
 
-    def ask(self, user_input: str) -> str:
-        return self.agent_executor.invoke({
+    async def ask(self, user_input: str) -> str:
+        result = await self.agent_executor.ainvoke({
             'input': user_input,
             'chat_history': self.memory.chat_memory.messages
         })
+        return result['output']

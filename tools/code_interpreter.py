@@ -10,6 +10,7 @@ from config.settings import GENAI_MODEL, DOCKER_CONTAINER
 from typing import Optional
 from pydantic import Field, BaseModel
 from typing import Type
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 CODE_GENERATION_SYSTEM_PROMPT = """
 You are an intelligent AI agent designed to generate accurate python3 code and you SHOULD to use tool generate_code
