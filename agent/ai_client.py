@@ -2,9 +2,6 @@ from tools.code_interpreter import CodeGenerator, DockerCodeInterpreter
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain import hub
 
-from langchain.memory import ConversationBufferMemory
-
-from langchain_google_genai import ChatGoogleGenerativeAI
 
 from config.settings import GROQ_API_KEY, GROQ_MODEL, GENAI_API_KEY, GENAI_MODEL
 
