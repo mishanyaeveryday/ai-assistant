@@ -334,6 +334,30 @@ class MessageHistory_DB:
             return MessageHistory(*row)
         return None
 
+    def get_last_5_messages_by_id(self, chat_id):
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                'SELECT input, output FROM messages_history WHERE chat_id = ? ORDER BY timestamp DESC LIMIT 5 ', (chat_id,))
+            rows = cursor.fetchall()
+            if not rows:
+                return []
+
+            messages = []
+            for row in rows:
+                user_text = row[0]
+                try:
+                    model_text = json.loads(
+                        row[1]) if row[1] is not None else None
+                except json.JSONDecodeError:
+                    model_text = row[1]
+
+        messages.append({'user': user_text, 'model': model_text})
+
+        messages.reverse()
+
+        return messages
+
     def add_input_and_output(self, chat_id, user_input=None, assistant_output=None):
         with self._get_connection() as conn:
             cursor = conn.cursor()

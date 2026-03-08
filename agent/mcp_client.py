@@ -1,15 +1,7 @@
-import asyncio
 from typing import Optional
 from contextlib import AsyncExitStack
-from pathlib import Path
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-import sniffio
-from langchain_google_genai import ChatGoogleGenerativeAI
-from config.settings import GROQ_API_KEY, GROQ_MODEL, GENAI_API_KEY, GENAI_MODEL
-from dotenv import load_dotenv
-import os
-import sys
 
 
 class MCPClient:
@@ -17,10 +9,6 @@ class MCPClient:
         # Initialize session and client objects
         self.session: Optional[ClientSession] = None
         self.exit_stack = AsyncExitStack()
-        self.llm = ChatGoogleGenerativeAI(
-            model=GENAI_MODEL,
-            google_api_key=GENAI_API_KEY
-        )
 
     async def connect_to_server(self, server_script_path: str):
         """Connect to an MCP server
@@ -47,8 +35,8 @@ class MCPClient:
         await self.session.initialize()
 
         # List available tools
-        response = await self.session.list_tools()
-        tools = response.tools
+        tools = await self.get_tools()
+
         print("\nConnected to server with tools:",
               [tool.name for tool in tools])
 
@@ -57,3 +45,7 @@ class MCPClient:
             return []
         response = await self.session.list_tools()
         return response.tools
+
+    async def call_tool(self, tool_name, arguments):
+        result = await self.session.call_tool(name=tool_name, arguments=arguments)
+        return result

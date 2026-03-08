@@ -1,42 +1,47 @@
 from tools.code_interpreter import CodeGenerator, DockerCodeInterpreter
-from langchain.agents import AgentExecutor, create_tool_calling_agent
-from langchain import hub
-
-
-from config.settings import GROQ_API_KEY, GROQ_MODEL, GENAI_API_KEY, GENAI_MODEL
-
+from config.settings import GENAI_API_KEY, GENAI_MODEL
+from core.llm_client import GeminiClient
 from agent.mcp_client import MCPClient
+from google.genai import types
+from db.database import MessageHistory_DB
 
 
 class AIClient:
-    def __init__(self, memory: ConversationBufferMemory, tools, model=GENAI_MODEL):
-        self.memory = memory
-        self.llm = ChatGoogleGenerativeAI(
-            model=model,
-            temperature=0,
+    def __init__(self, memory, tools, model=GENAI_MODEL):
+        self.llm = GeminiClient(
+            llm_model=model,
             api_key=GENAI_API_KEY
         )
+        self.mcp_client = MCPClient()
+        self.memory = memory  # get_last_5_messages_by_id(chat_id=chat_id)
+        self.tools = tools
+        self.system_prompt = str(
+            """You are AI-Assistant for managing applications and computers.
+        You should use tools when it's necessary""")
 
-        prompt = hub.pull("hwchase17/openai-functions-agent")
+    async def ask(self, user_prompt: str, temperature: float = 0.3, selected_tool: list = None) -> str:
 
-        agent = create_tool_calling_agent(
-            llm=self.llm,
-            tools=tools,
-            prompt=prompt,
+        contents = self._format_history(memory=self.memory)
+        contents.append(types.Content(role='user', parts=[
+                        types.Part.from_text(text=user_prompt)]))
 
-        )
+        tools = selected_tool or self.tools
+        for _ in range(5):
+            response = await self.llm.generate(contents=contents, tools=tools,
+                                               temperature=temperature, system_prompt=self.system_prompt)
+            if response.function_calls:
+                for t in response.function_calls:
+                    result = await self.mcp_client.call_tool(t['name'], t['args'])
+                    contents.append(types.Part.from_function_response(result))
+            else:
+                break
+        return response.text
 
-        self.agent_executor = AgentExecutor(
-            agent=agent,
-            tools=tools,
-            verbose=True,
-            memory=self.memory,
-            handle_parsing_errors=True,
-        )
-
-    async def ask(self, user_input: str) -> str:
-        result = await self.agent_executor.ainvoke({
-            'input': user_input,
-            'chat_history': self.memory.chat_memory.messages
-        })
-        return result['output']
+    def _format_history(self, memory):
+        last_messages = []
+        for m in memory:
+            last_messages.append(types.Content(role='user', parts=m['input']))
+            if m['output'] != None:
+                last_messages.append(types.Content(
+                    role='model', parts=m['output']))
+        return last_messages

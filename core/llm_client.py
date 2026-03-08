@@ -3,14 +3,13 @@ from google.genai import types
 
 
 class GeminiClient:
-    def __init__(self, llm_model, tools, api_key):
+    def __init__(self, llm_model, api_key):
         self.llm_model = llm_model
-        self.tools = tools
         self.client = genai.Client(api_key=api_key)
 
-    async def generate(self, contents, available_tools, temperature, system_prompt):
+    async def generate(self, contents, tools, temperature, system_prompt):
         config = types.GenerateContentConfig(
-            temperature=temperature, tools=available_tools, system_instruction=system_prompt)
+            temperature=temperature, tools=tools, system_instruction=system_prompt)
         try:
             response = self.client.aio.models.generate_content(
                 model=self.llm_model, contents=contents,
