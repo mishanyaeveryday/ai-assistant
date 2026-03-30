@@ -32,33 +32,6 @@ class User:
         )
 
 
-class Subscription:
-    def __init__(self, id, name, features, price, duration_days, is_active):
-        self.id = id
-        self.name = name
-        self.features = features
-        self.price = price
-        self.duration_days = duration_days
-
-
-class UserSubscription:
-    def __init__(self, id, user_id, subscription_id, activated_at, expires_at, is_cancelled):
-        self.id = id
-        self.user_id = user_id
-        self.subscription_id = subscription_id
-        self.activated_at = activated_at
-        self.expires_at = expires_at
-        self.is_cancelled = is_cancelled
-
-
-class SubscriptionTool:
-    def __init__(self, id, subscription_id, tool_id, is_enabled):
-        self.id = id
-        self.subscription_id = subscription_id
-        self.tool_id = tool_id
-        self.is_enabled = is_enabled
-
-
 class Chat:
     def __init__(self, id, title, user_id, created_at):
         self.id = id
