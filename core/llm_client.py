@@ -11,7 +11,7 @@ class GeminiClient:
         config = types.GenerateContentConfig(
             temperature=temperature, tools=tools, system_instruction=system_prompt)
         try:
-            response = self.client.aio.models.generate_content(
+            response = await self.client.aio.models.generate_content(
                 model=self.llm_model, contents=contents,
                 config=config)
             return response

@@ -1,10 +1,9 @@
 import bcrypt
 from core.models import User, Chat, MessageHistory
 from db.database import User_DB, Chat_DB, MessageHistory_DB
-from langchain.memory import ConversationSummaryBufferMemory
-from langchain_groq import ChatGroq
-from config.settings import GROQ_API_KEY, GROQ_MODEL, GENAI_API_KEY, GENAI_MODEL
-from langchain_google_genai import ChatGoogleGenerativeAI
+from config.settings import GENAI_API_KEY, GENAI_MODEL
+from core.llm_client import GeminiClient
+from agent.ai_client import AIClient
 
 
 class AuthService:
@@ -80,47 +79,38 @@ class MessageService:
 
 
 class AIClientService():
-    def __init__(self, message_db: MessageHistory_DB, model=GENAI_MODEL):
-        self.model = model
+    def __init__(self, message_db: MessageHistory_DB):
         self.message_db = message_db
 
-        self.llm_for_summarization = ChatGoogleGenerativeAI(
-            model=model,
-            temperature=0,
-            api_key=GENAI_API_KEY
-        )
-
-    def record_input(self, chat_id, input):
+    def record_input(self, input, chat_id):
         id = self.message_db.add_input(chat_id=chat_id, user_input=input)
         return id
 
-    def record_output(self, id, chat_id, output):
+    def record_output(self, id, output, chat_id):
         self.message_db.add_output(
             message_history_id=id, chat_id=chat_id, assistant_output=output)
 
-    def record_conversation(self, chat_id, input, output):
+    def record_conversation(self, input, output, chat_id):
         self.message_db.add_input_and_output(
             chat_id=chat_id, user_input=input, assistant_output=output)
 
     def load_memory_for_chat(self, chat_id):
-        message_history = self.message_db.get_messages_by_chat_id(
+        message_history = self.message_db.get_last_5_messages_by_id(
             chat_id=chat_id)
-
-        memory = ConversationSummaryBufferMemory(
-            llm=self.llm_for_summarization,
-            max_token_limit=2000,
-            memory_key="chat_history",
-            return_messages=True
-        )
-
+        print(f"Message hstr: {message_history}")
+        # # add memory
+        # # Summarize messages: Summarize earlier messages in the history and replace them with a summary
+        # # Manage checkpoints to store and retrieve message history
+        # # Custom strategies (e.g., message filtering, etc.)
+        memory = []
         for msg in message_history:
-            user_message = msg.get('input')
-            ai_message = msg.get('output')
+            user_message = msg.get('user')
+            ai_message = msg.get('model')
 
             if user_message:
-                memory.chat_memory.add_user_message(user_message)
+                memory.append({"input": user_message})
 
             if ai_message:
-                memory.chat_memory.add_ai_message(ai_message)
+                memory.append({"output": ai_message})
 
         return memory

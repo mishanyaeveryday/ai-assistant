@@ -182,15 +182,9 @@ class AIClientController(QObject):
         self._view.set_input_enabled(True)
 
         try:
-            user_input = self.worker.user_input
-            chat_id = self.worker.chat_id
 
             if response_dict and 'output' in response_dict:
                 assistant_output = response_dict['output']
-
-                self._model.record_conversation(
-                    chat_id=chat_id, input=user_input, output=assistant_output
-                )
                 self._view.add_assistant_message(assistant_output)
             else:
                 self._view.add_assistant_message(

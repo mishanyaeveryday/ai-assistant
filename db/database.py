@@ -222,8 +222,7 @@ class MessageHistory_DB:
                         row[1]) if row[1] is not None else None
                 except json.JSONDecodeError:
                     model_text = row[1]
-
-        messages.append({'user': user_text, 'model': model_text})
+                messages.append({'user': user_text, 'model': model_text})
 
         messages.reverse()
 

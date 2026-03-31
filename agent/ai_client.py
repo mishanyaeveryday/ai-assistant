@@ -1,9 +1,7 @@
-from tools.code_interpreter import CodeGenerator, DockerCodeInterpreter
 from config.settings import GENAI_API_KEY, GENAI_MODEL
 from core.llm_client import GeminiClient
 from agent.mcp_client import MCPClient
 from google.genai import types
-from db.database import MessageHistory_DB
 
 
 class AIClient:
@@ -40,8 +38,10 @@ class AIClient:
     def _format_history(self, memory):
         last_messages = []
         for m in memory:
-            last_messages.append(types.Content(role='user', parts=m['input']))
-            if m['output'] != None:
+            if 'input' in m:
                 last_messages.append(types.Content(
-                    role='model', parts=m['output']))
+                    role='user', parts=[types.Part.from_text(text=m['input'])]))
+            elif 'output' in m and m['output'] != None:
+                last_messages.append(types.Content(
+                    role='model', parts=[types.Part.from_text(text=m['output'])]))
         return last_messages
