@@ -49,3 +49,10 @@ class MCPClient:
     async def call_tool(self, tool_name, arguments):
         result = await self.session.call_tool(name=tool_name, arguments=arguments)
         return result
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        print("\n[MCP] Cleaning up resources and closing servers...")
+        await self.exit_stack.aclose()

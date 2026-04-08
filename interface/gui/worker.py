@@ -1,9 +1,7 @@
 from PySide6.QtCore import QObject, Signal
-from agent.ai_client import AIClient
+from agent.orchestrator import AIClient
 from agent.mcp_client import MCPClient
 from core.services import AIClientService
-import asyncio
-# from langchain_mcp_adapters.tools import load_mcp_tools
 from async_timeout import timeout
 
 
@@ -24,7 +22,6 @@ class AIWorker(QObject):
             memory = self._model.load_memory_for_chat(self.chat_id)
             print(f"Memory {memory}")
             print(f'Memory has been initialized')
-            langchain_tools = []
 
             print(f'Status of session: {self.mcp_client.session}')
             # try:
@@ -34,7 +31,8 @@ class AIWorker(QObject):
             #     self.error.emit("Timeout: MCP server is not responding")
             #     return
 
-            ai_client = AIClient(memory=memory, tools=langchain_tools)
+            ai_client = AIClient(mcp_client=self.mcp_client,
+                                 memory=memory)
 
             async with timeout(30):
                 message_id = self._model.record_input(

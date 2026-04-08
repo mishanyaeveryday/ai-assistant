@@ -2,7 +2,6 @@ from PySide6.QtCore import Signal, QObject
 from core.models import User
 from interface.gui.view import RegistrationWindow, LoginWindow, MainWindow, NewChatWindow
 from core.services import AuthService, ChatService, MessageService, AIClientService
-from agent.ai_client import AIClient
 from interface.gui.worker import AIWorker
 from agent.mcp_client import MCPClient
 import asyncio

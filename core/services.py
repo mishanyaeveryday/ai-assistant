@@ -1,9 +1,6 @@
 import bcrypt
 from core.models import User, Chat, MessageHistory
 from db.database import User_DB, Chat_DB, MessageHistory_DB
-from config.settings import GENAI_API_KEY, GENAI_MODEL
-from core.llm_client import GeminiClient
-from agent.ai_client import AIClient
 
 
 class AuthService:

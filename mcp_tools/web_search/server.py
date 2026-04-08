@@ -1,5 +1,6 @@
 import os
 import sys
+from typing import Annotated
 from mcp.server.fastmcp import FastMCP
 from tavily import TavilyClient
 
@@ -16,7 +17,7 @@ tavily = TavilyClient(api_key=TAVILY_API_KEY)
 
 
 @mcp.tool()
-async def web_search(query: str):
+async def web_search(query: Annotated[str, "The search query to look up on the internet"]):
     '''
     Use this tool to search the internet for recent or
     factual information when user asks about current events or
