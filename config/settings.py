@@ -12,6 +12,8 @@ GENAI_API_KEY = os.getenv('GENAI_API_KEY')
 
 GENAI_MODEL = "gemini-2.5-flash"
 
+TOOLS_REQUIRING_APPROVAL: frozenset[str] = frozenset({"terminal_command"})
+
 DOCKER_CONTAINER = os.getenv("DOCKER_CONTAINER")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 
