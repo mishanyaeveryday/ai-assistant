@@ -17,10 +17,12 @@ async def setup_mcp(client, view: MainWindow):
     try:
         await client.connect_to_server('mcp_tools/web_search/server.py')
         await client.connect_to_server('mcp_tools/terminal_command/server.py')
+        await client.connect_to_server('mcp_tools/filesystem_command/server.py')
         print("MCP Servers connected successfully")
     except Exception as e:
         print(f"MCP Connection Error: {e}")
         view.set_input_enabled(True)
+
 
 async def main():
     # 1. Initialize DB

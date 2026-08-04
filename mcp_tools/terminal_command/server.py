@@ -8,12 +8,14 @@ from mcp.server.fastmcp import FastMCP
 mcp = FastMCP("terminal-command")
 
 
-@mcp.tool()
-async def terminal_command(command: Annotated[str, "The command to execute in the terminal"]):
-    f'''
-    Use this tool to execute a terminal command.
-    The command should be a valid terminal command for {platform.system()}, {platform.machine()}.
-    '''
+@mcp.tool(description=(
+    f"Execute a shell command on the user's machine ({platform.system()} {platform.machine()}). "
+    "Use this for system-level actions that no other tool covers, e.g. opening applications, "
+    "checking system info, or running scripts. Pass the full command exactly as it should be "
+    "typed in a terminal on this OS. For reading, writing, appending, or deleting files, prefer "
+    "the dedicated filesystem tools instead of shell commands."
+))
+async def terminal_command(command: Annotated[str, "The exact shell command to run, e.g. 'ls -la' or 'open -a Calculator'"]):
     try:
         proc = await asyncio.to_thread(
             subprocess.run,
