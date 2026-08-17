@@ -79,6 +79,7 @@ guments.""")
                     for t in response.function_calls:
                         raw_args = getattr(t, "args", None)
                         args = raw_args if isinstance(raw_args, dict) else {}
+                        print(f"Tool called: {t.name} args={args}")
                         part = await self.tools_adapter.call_and_format(t.name, args)
                         if part is not None:
                             tool_parts.append(part)
@@ -95,7 +96,7 @@ guments.""")
         raw_tools = selected_tool or await self.mcp_client.get_tools()
         gemini_tools = [
             self.tools_adapter.mcp_tools_to_gemini_declarations(mcp_tools=raw_tools)]
-        print(f'Gemini Tools:{gemini_tools}')
+        # print(f'Gemini Tools:{gemini_tools}')
         response = await self.thinking_loop(
             count=5,
             contents=contents,

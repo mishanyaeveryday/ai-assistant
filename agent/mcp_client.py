@@ -1,6 +1,7 @@
 from contextlib import AsyncExitStack
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+import sys
 
 
 class MCPClient:
@@ -21,7 +22,7 @@ class MCPClient:
         if not (is_python or is_js):
             raise ValueError("Server script must be a .py or .js file")
 
-        command = "python" if is_python else "node"
+        command = sys.executable if is_python else "node"
         server_params = StdioServerParameters(
             command=command,
             args=[server_script_path],
@@ -52,7 +53,8 @@ class MCPClient:
     async def call_tool(self, tool_name, arguments):
         session = self.tool_to_session.get(tool_name)
         if session is None:
-            raise ValueError(f"No connected MCP server exposes a tool named '{tool_name}'")
+            raise ValueError(
+                f"No connected MCP server exposes a tool named '{tool_name}'")
         result = await session.call_tool(name=tool_name, arguments=arguments)
         return result
 
