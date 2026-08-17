@@ -1,10 +1,21 @@
+import os
+import sys
 from pathlib import Path
 from typing import Annotated
 from mcp.server.fastmcp import FastMCP
 
+try:
+    from config.settings import WORKSPACE_DIR
+except ImportError:
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.abspath(os.path.join(current_dir, "..", ".."))
+    sys.path.insert(0, project_root)
+    from config.settings import WORKSPACE_DIR
+
 mcp = FastMCP("filesystem")
 
-WORKSPACE = Path("/some/allowed/root").resolve()
+WORKSPACE = Path(WORKSPACE_DIR).resolve()
+WORKSPACE.mkdir(parents=True, exist_ok=True)
 
 
 def _resolve(path: str) -> Path:

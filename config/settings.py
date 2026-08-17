@@ -1,8 +1,11 @@
 # Configuration of API keys and paths
 from dotenv import load_dotenv
+from pathlib import Path
 import os
 
 load_dotenv()
+
+WORKSPACE_DIR = os.getenv("WORKSPACE_DIR", str(Path.home() / "ai-assistant-workspace"))
 
 GROQ_API_KEY = os.getenv('GROQ_API_KEY')
 
