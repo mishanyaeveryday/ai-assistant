@@ -19,6 +19,7 @@ async def setup_mcp(client, view: MainWindow):
         await client.connect_to_server('mcp_tools/terminal_command/server.py')
         await client.connect_to_server('mcp_tools/filesystem_command/server.py')
         await client.connect_to_server('mcp_tools/screenshot_command/server.py')
+        await client.connect_to_server('mcp_tools/input_control/server.py')
         print("MCP Servers connected successfully")
     except Exception as e:
         print(f"MCP Connection Error: {e}")
