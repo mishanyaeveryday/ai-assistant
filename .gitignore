@@ -1,0 +1,28 @@
+# Project
+AA_description.docx
+files/
+
+# Env and secrets
+.env
+config/.env
+**/.env
+
+# Database (local)
+*.sqlite3
+ai-assistent.sqlite3
+
+# Python
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+.venv/
+venv/
+.envrc
+.python-version
+
+# Pytest
+.pytest_cache/
+**/.pytest_cache/
+*cache
