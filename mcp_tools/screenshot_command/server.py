@@ -1,22 +1,27 @@
+import io
 import os
 import sys
-import cv2
-import pytesseract
+import mimetypes
 from datetime import datetime
 from typing import Annotated
 from PIL import ImageGrab
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
+from google import genai
+from google.genai import types
+from google.genai import errors as genai_errors
 
 try:
-    from config.settings import SCREENSHOT_DIR, WORKSPACE_DIR
+    from config.settings import SCREENSHOT_DIR, WORKSPACE_DIR, GENAI_API_KEY, GENAI_MODEL
 except ImportError:
     current_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(current_dir, "..", ".."))
     sys.path.insert(0, project_root)
-    from config.settings import SCREENSHOT_DIR, WORKSPACE_DIR
+    from config.settings import SCREENSHOT_DIR, WORKSPACE_DIR, GENAI_API_KEY, GENAI_MODEL
 
 mcp = FastMCP("screenshot")
+
+_genai_client = genai.Client(api_key=GENAI_API_KEY)
 
 WORKSPACE = Path(SCREENSHOT_DIR).resolve()
 WORKSPACE.mkdir(parents=True, exist_ok=True)
@@ -61,32 +66,52 @@ async def make_screenshot(
 
 
 @mcp.tool()
-async def read_screen_text() -> str:
-    '''Capture the current screen and extract any visible text via OCR, without saving a screenshot file to disk.
-    This only reads text on screen (labels, messages, code, etc.) — it cannot describe images, icons,
-    colors, or layout.'''
-    img = ImageGrab.grab().convert("L")
-    text = pytesseract.image_to_string(img)
-    return text.strip() or "No text detected on screen."
-
-
-@mcp.tool()
-async def read_image_text(
+async def read_image(
     filename: Annotated[str,
-                        "Name or path of the image to read text from: a bare filename is looked up "
-                        "in the screenshot dir then the workspace dir; an absolute path is used as-is"]
+                        "Name or path of the image to look at: a bare filename is looked up "
+                        "in the screenshot dir then the workspace dir; an absolute path is used as-is. "
+                        "Leave empty to capture and look at the current screen instead."] = "",
+    question: Annotated[str,
+                        "What to do with the image, e.g. 'extract the visible text', 'describe what's "
+                        "shown', 'what error is displayed'. Defaults to a general description plus any text."] = ""
 ) -> str:
-    '''Extract visible text from an image (e.g. a saved screenshot, or any other image file) using OCR.
-    Use this after make_screenshot to find out what text is actually shown on screen, or on any
-    other image the user points to.'''
-    p = _resolve_image(filename)
-    if not p.exists():
-        return f"File not found: {filename}"
+    '''Have the AI model look at an image directly (no OCR) and answer a question about it, or describe
+    it and read out any visible text by default. Pass no filename to capture and look at the current
+    screen; pass a filename (e.g. one made by make_screenshot) to look at that instead. Not just for
+    text — use it to describe UI, diagrams, photos, whatever the user points to.'''
+    if filename:
+        p = _resolve_image(filename)
+        if not p.exists():
+            return f"File not found: {filename}"
+        image_bytes = p.read_bytes()
+        mime_type = mimetypes.guess_type(p.name)[0] or "image/png"
+    else:
+        buf = io.BytesIO()
+        ImageGrab.grab().save(buf, format="PNG")
+        image_bytes = buf.getvalue()
+        mime_type = "image/png"
 
-    img = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
-    if img is None:
-        return f"Could not read image: {filename}"
+    prompt = question.strip() or (
+        "Describe what is shown in this image, and separately list any text that is visible in it, "
+        "exactly as it appears."
+    )
 
-    _, bw_img = cv2.threshold(img, 127, 255, cv2.THRESH_BINARY)
-    text = pytesseract.image_to_string(bw_img)
-    return text.strip() or "No text detected in the image."
+    try:
+        response = await _genai_client.aio.models.generate_content(
+            model=GENAI_MODEL,
+            contents=[
+                types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+                prompt,
+            ],
+        )
+    except (genai_errors.ClientError, genai_errors.ServerError) as e:
+        message = str(e).lower()
+        if any(kw in message for kw in ("image", "modalit", "mime_type", "unsupported")):
+            return f"Model '{GENAI_MODEL}' does not support reading images."
+        return f"Failed to read image via the model: {e}"
+
+    return (response.text or "").strip() or "The model returned no output for this image."
+
+
+if __name__ == "__main__":
+    mcp.run(transport='stdio')
