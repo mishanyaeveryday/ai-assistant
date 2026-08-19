@@ -7,7 +7,7 @@ Desktopowa aplikacja z graficznym interfejsem (PySide6), umożliwiająca rozmow�
 - **Rejestracja i logowanie** — konta użytkowników, hasła hashowane (bcrypt)
 - **Wiele czatów** — tworzenie czatów, przełączanie między nimi, historia wiadomości
 - **Asystent AI** — odpowiedzi generowane przez model Gemini (LangChain), z pamięcią kontekstu w obrębie czatu
-- **Narzędzia MCP** — wyszukiwanie w internecie (Tavily) przez serwer MCP
+- **Narzędzia MCP** — wyszukiwanie w internecie (Tavily), operacje na plikach, terminal, zrzuty ekranu, sterowanie myszą/klawiaturą oraz **sandbox kodu Python w Dockerze** — wszystko przez serwery MCP
 - **Baza SQLite** — użytkownicy, czaty i historia wiadomości przechowywane lokalnie
 
 ## Wymagania
@@ -76,7 +76,7 @@ Otwórz **`.env`** w edytorze i ustaw przynajmniej:
 
 ### 5. (Opcja) Sandbox kodu w Dockerze
 
-Konieczne **tylko** przy korzystaniu z **`DockerCodeInterpreter`**. Kroki są opisane w sekcji **„Kontener Docker (sandbox kodu Python)”** poniżej.
+Konieczne **tylko** jeśli chcesz, żeby asystent mógł uruchamiać kod Python narzędziem **`run_python_code`**. Kroki są opisane w sekcji **„Kontener Docker (sandbox kodu Python)”** poniżej.
 
 ### 6. Uruchom aplikację
 
@@ -172,31 +172,61 @@ DOCKER_CONTAINER=...
 
 - **GENAI_API_KEY** — [Google AI Studio](https://aistudio.google.com/apikey), model: `gemini-2.5-flash`
 - **TAVILY_API_KEY** — [Tavily](https://tavily.com/) — zmienna jest wymagana przez `config/settings.py`; bez niej aplikacja nie wystartuje
-- **DOCKER_CONTAINER** — nazwa lub tag obrazu używana przez **`DockerCodeInterpreter`** w `tools/code_interpreter.py` (opcja poza MCP i głównym GUI — tylko gdy korzystasz z tego narzędzia LangChain/Docker)
+- **DOCKER_CONTAINER** — nazwa/tag zbudowanego obrazu Dockera, którego używa narzędzie MCP **`run_python_code`** (`mcp_tools/code_interpreter/server.py`) do uruchamiania kodu Python w sandboxie. Bez tej zmiennej narzędzie jest zarejestrowane w GUI, ale przy próbie użycia zwróci błąd — patrz **[Kontener Docker (sandbox kodu Python)](#kontener-docker-sandbox-kodu-python)**
 
 Dodatkowo opcjonalnie (np. inne eksperymentalne ścieżki w kodzie): **GROQ_API_KEY** — jeśli dany moduł z niego korzysta.
 
 ### Kontener Docker (sandbox kodu Python)
 
-Pełna aplikacja z oknem **PySide6** nadal działa **bez Dockera**. Obraz **`Dockerfile`** w katalogu `ai-assistant` służy głównie jako **lekki środowiskowy sandbox** dla wykonywania wygenerowanego kodu w kontenerze (przez ustawienie **`DOCKER_CONTAINER`** i moduł `DockerCodeInterpreter`).
+Pełna aplikacja z oknem **PySide6** nadal działa **bez Dockera**. Kontener jest potrzebny tylko do narzędzia MCP **`run_python_code`** (`mcp_tools/code_interpreter/server.py`), które pozwala asystentowi uruchamiać kod Python w izolowanym, jednorazowym sandboxie. Bez skonfigurowanego Dockera reszta aplikacji (GUI, czaty, pozostałe narzędzia MCP) działa normalnie — to narzędzie po prostu zwróci błąd, jeśli zostanie użyte.
 
-1. Zainstaluj i uruchom **Docker Desktop** lub demona Dockera.
-2. Z katalogu `ai-assistant` zbuduj obraz:
+#### 1. Uruchom Docker
+
+Zainstaluj i uruchom **Docker Desktop** (macOS/Windows) lub demona `dockerd` (Linux). Sprawdź, że działa:
+
+```bash
+docker info
+```
+
+#### 2. Zbuduj obraz sandboxa
+
+Z katalogu `ai-assistant` (tam, gdzie jest `Dockerfile`):
 
 ```bash
 cd ai-assistant
 docker build -t ai-assistant-code-sandbox .
 ```
 
-3. W pliku `.env` ustaw **taki sam tag**, np.:
+Obraz bazuje na `python:3.11.10-slim-bookworm` i instaluje z góry biblioteki wymienione w `Dockerfile` (m.in. `pandas`, `numpy`, `matplotlib`, `plotly`, `python-docx`, `beautifulsoup4`, `requests`), żeby kod generowany przez asystenta miał je od razu dostępne bez instalowania w locie.
+
+#### 3. Ustaw `DOCKER_CONTAINER` w `.env`
+
+W pliku `.env` (w katalogu `ai-assistant`) wpisz **dokładnie ten sam tag**, którego użyłeś przy `docker build -t ...`:
 
 ```env
 DOCKER_CONTAINER=ai-assistant-code-sandbox
 ```
 
-4. W kodzie który wywołuje interpreter, **`DOCKER_CONTAINER` musi wskazywać na już zbudowany obraz** — inaczej `docker.containers.run(...)` się nie powiedzie.
+Jeśli zmienna jest pusta albo obraz o tym tagu nie istnieje, `run_python_code` zwróci komunikat błędu zamiast wykonać kod — reszta aplikacji nie jest tym blokowana.
 
-Obraz kopiuje uproszczony `main.py` i instaluje pakiety wymienione w `Dockerfile`; katalog montowany z hosta przy uruchamianiu kontenera nadpisuje `/app`, ale biblioteki z obrazu pozostają dostępne do importów w uruchamianym skrypcie.
+#### 4. Uruchom aplikację normalnie
+
+```bash
+python main.py
+```
+
+`main.py` przy starcie łączy się m.in. z `mcp_tools/code_interpreter/server.py` (patrz `setup_mcp` w `main.py`) — narzędzie `run_python_code` jest wtedy dostępne dla asystenta, o ile Docker działa i obraz jest zbudowany.
+
+#### Jak działa sandbox (kod nigdzie nie jest zapisywany na stałe)
+
+Za każdym wywołaniem `run_python_code`:
+
+1. Kod dostarczony przez asystenta jest zapisywany do **tymczasowego katalogu** (`tempfile.TemporaryDirectory`), tworzonego na czas jednego uruchomienia.
+2. Ten katalog jest montowany do kontenera jako `/sandbox`, a kontener uruchamia `python /sandbox/main.py`.
+3. Po zakończeniu wykonania kontener jest usuwany (`remove=True`), a tymczasowy katalog na hoście jest kasowany automatycznie po wyjściu z bloku `with` — **sam kod nie zostaje zapisany nigdzie na stałe w repo ani na dysku**.
+4. Dodatkowo katalog z **`WORKSPACE_DIR`** (patrz zmienna w `.env`, domyślnie `~/ai-assistant-workspace`) jest montowany do kontenera jako `/workspace`. Jeśli kod ma wygenerować plik, który ma **przetrwać** po zakończeniu (raport, wykres, wygenerowane dane), powinien zapisać go pod ścieżką `/workspace/...` wewnątrz kontenera — wtedy plik ląduje trwale w `WORKSPACE_DIR` na hoście. Wszystko zapisane gdzie indziej (np. w bieżącym katalogu `/sandbox`) jest traktowane jako dane tymczasowe i znika razem z kontenerem.
+
+Uwaga: to inny mechanizm niż starszy `tools/code_interpreter.py` / `DockerCodeInterpreter`, który zapisywał wykonywany skrypt na stałe do katalogu `tools/files/` na hoście. `tools/code_interpreter.py` jest zachowany w repo (ma własne testy), ale **nie jest** podpięty do `main.py` / GUI — aktualnym, używanym w aplikacji narzędziem jest `mcp_tools/code_interpreter/server.py`.
 
 ## Uruchomienie (skrót)
 
@@ -228,8 +258,13 @@ ai-assistant/
 ├── interface/
 │   └── gui/                # PySide6: okna, kontrolery, worker AI
 ├── mcp_tools/
-│   └── web_search/         # serwer MCP z narzędziem Tavily
-├── tools/                  # code_interpreter (Docker) — opcjonalnie
+│   ├── web_search/          # serwer MCP z narzędziem Tavily
+│   ├── filesystem_command/  # odczyt/zapis plików w WORKSPACE_DIR
+│   ├── terminal_command/    # wykonywanie poleceń shell
+│   ├── screenshot_command/  # zrzuty ekranu
+│   ├── input_control/       # sterowanie myszą/klawiaturą
+│   └── code_interpreter/    # sandbox kodu Python w Dockerze (run_python_code)
+├── tools/                  # starszy, niepodpięty do GUI code_interpreter (LangChain + Docker)
 └── tests/
 ```
 
