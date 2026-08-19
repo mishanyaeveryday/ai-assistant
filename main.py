@@ -14,14 +14,17 @@ import asyncio
 
 
 async def setup_mcp(client, view: MainWindow):
-    # view.set_input_enabled(False)
     try:
         await client.connect_to_server('mcp_tools/web_search/server.py')
-        print("MCP Server connected successfully")
+        await client.connect_to_server('mcp_tools/terminal_command/server.py')
+        await client.connect_to_server('mcp_tools/filesystem_command/server.py')
+        await client.connect_to_server('mcp_tools/screenshot_command/server.py')
+        await client.connect_to_server('mcp_tools/input_control/server.py')
+        await client.connect_to_server('mcp_tools/code_interpreter/server.py')
+        print("MCP Servers connected successfully")
     except Exception as e:
         print(f"MCP Connection Error: {e}")
-    # finally:
-    #     view.set_input_enabled(True)
+        view.set_input_enabled(True)
 
 
 async def main():

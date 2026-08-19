@@ -1,8 +1,15 @@
 # Configuration of API keys and paths
 from dotenv import load_dotenv
+from pathlib import Path
 import os
 
 load_dotenv()
+
+WORKSPACE_DIR = os.getenv("WORKSPACE_DIR", str(
+    Path.home() / "ai-assistant-workspace"))
+
+SCREENSHOT_DIR = os.getenv("SCREENSHOT_DIR", str(
+    Path.home() / "ai-assistant-screenshots"))
 
 GROQ_API_KEY = os.getenv('GROQ_API_KEY')
 
@@ -11,6 +18,10 @@ GROQ_MODEL = "llama-3.3-70b-versatile"
 GENAI_API_KEY = os.getenv('GENAI_API_KEY')
 
 GENAI_MODEL = "gemini-2.5-flash"
+
+TOOLS_REQUIRING_APPROVAL: frozenset[str] = frozenset(
+    {"terminal_command", "write_file", "delete_file", "append_file", "delete_text", "make_screenshot",
+     "click", "type_text", "run_python_code"})
 
 DOCKER_CONTAINER = os.getenv("DOCKER_CONTAINER")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")

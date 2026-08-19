@@ -3,6 +3,8 @@ from core.models import User
 from interface.gui.view import RegistrationWindow, LoginWindow, MainWindow, NewChatWindow
 from core.services import AuthService, ChatService, MessageService, AIClientService
 from interface.gui.worker import AIWorker
+from interface.gui.mcp_tools_approval import HumanToolApproval
+from agent.tools_policy import ToolsApprovalPolicy
 from agent.mcp_client import MCPClient
 import asyncio
 
@@ -162,13 +164,21 @@ class AIClientController(QObject):
         self._model = model
         self._view = view
         self._mcp_client = mcp_client
+        self._tool_approval = HumanToolApproval(parent_widget=self._view)
+        self._approval_policy = ToolsApprovalPolicy()
         self._view.send_input.connect(self.handle_prompt)
 
     def handle_prompt(self, chat_id, user_input):
         self._view.set_input_enabled(False)
 
-        self.worker = AIWorker(self._model, chat_id,
-                               user_input, mcp_client=self._mcp_client)
+        self.worker = AIWorker(
+            self._model,
+            chat_id,
+            user_input,
+            mcp_client=self._mcp_client,
+            approve_tool=self._tool_approval.approve,
+            tools_approval_policy=self._approval_policy,
+        )
 
         self.worker.finished.connect(self.handle_ai_response)
 
