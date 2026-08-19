@@ -21,7 +21,7 @@ GENAI_MODEL = "gemini-2.5-flash"
 
 TOOLS_REQUIRING_APPROVAL: frozenset[str] = frozenset(
     {"terminal_command", "write_file", "delete_file", "append_file", "delete_text", "make_screenshot",
-     "click", "type_text"})
+     "click", "type_text", "run_python_code"})
 
 DOCKER_CONTAINER = os.getenv("DOCKER_CONTAINER")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
