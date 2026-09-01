@@ -89,6 +89,7 @@ guments.""")
         return response
 
     async def ask(self, user_prompt: str, temperature: float = 0.3, selected_tool: list = None) -> str:
+        self.tools_adapter.generated_images = []
         contents = self._format_history(memory=self.memory)
         contents.append(types.Content(role='user', parts=[
                         types.Part.from_text(text=user_prompt)]))
@@ -104,8 +105,13 @@ guments.""")
             temperature=temperature,
         )
         if response is None or not getattr(response, "candidates", None):
-            return "Sorry — no reply from the model."
-        return _response_to_text(response)
+            text = "Sorry — no reply from the model."
+        else:
+            text = _response_to_text(response)
+
+        for path in self.tools_adapter.generated_images:
+            text += f"\n[GENERATED_IMAGE:{path}]"
+        return text
 
     def _format_history(self, memory):
         last_messages = []

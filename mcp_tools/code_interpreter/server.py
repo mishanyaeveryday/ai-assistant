@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Annotated
 
@@ -23,10 +24,24 @@ WORKSPACE = Path(WORKSPACE_DIR).resolve()
 WORKSPACE.mkdir(parents=True, exist_ok=True)
 
 _FENCE_RE = re.compile(r"^```(?:python)?\s*\n?|\n?```\s*$", re.MULTILINE)
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".bmp", ".webp"}
 
 
 def _strip_code_fence(code: str) -> str:
     return _FENCE_RE.sub("", code).strip()
+
+
+def _append_generated_image_markers(text: str, since: float) -> str:
+    """Tag any image file written to the workspace during this run so the
+    caller can surface it (e.g. render a generated chart in the chat UI)."""
+    new_images = [
+        p for p in WORKSPACE.rglob("*")
+        if p.is_file() and p.suffix.lower() in _IMAGE_EXTS and p.stat().st_mtime >= since
+    ]
+    if not new_images:
+        return text
+    markers = "\n".join(f"[GENERATED_IMAGE:{p.resolve()}]" for p in new_images)
+    return f"{text}\n{markers}"
 
 
 @mcp.tool(description=(
@@ -36,7 +51,13 @@ def _strip_code_fence(code: str) -> str:
     "is returned as the tool output. If the code needs to keep a file after execution (a report, "
     "an image, generated data, etc.), have it write that file under /workspace inside the sandbox - "
     "that path is mounted to the user's persistent workspace and survives; everything written "
-    "elsewhere (e.g. the current directory) is scratch space that is discarded on exit."
+    "elsewhere (e.g. the current directory) is scratch space that is discarded on exit. "
+    "Whenever the task involves a chart, plot, graph, diagram, or any other visual output, ALWAYS "
+    "generate it as an actual image file (e.g. matplotlib's savefig(...)) saved under /workspace - "
+    "never only print a textual description or ASCII rendering instead. Any image file saved this "
+    "way is automatically detected and shown to the user as a visual report in the chat, so do not "
+    "try to embed, encode, or re-describe the image yourself; just confirm briefly in your reply "
+    "that the chart/image was created."
 ))
 async def run_python_code(
     code: Annotated[str, "Valid, self-contained Python source code to execute."],
@@ -49,6 +70,7 @@ async def run_python_code(
         return "Error: no code was provided to execute."
 
     client = docker.from_env()
+    start_time = time.time()
 
     with tempfile.TemporaryDirectory(prefix="code-interpreter-") as tmp_dir:
         sandbox_dir = Path(tmp_dir)
@@ -67,10 +89,14 @@ async def run_python_code(
                 stderr=True,
                 stdout=True,
             )
-            return output.decode("utf-8") or "Execution finished with no output."
+            text = output.decode(
+                "utf-8") or "Execution finished with no output."
+            return _append_generated_image_markers(text, start_time)
         except ContainerError as e:
-            stderr = e.stderr.decode("utf-8") if isinstance(e.stderr, bytes) else str(e.stderr)
-            return f"Execution failed (exit {e.exit_status}):\n{stderr}"
+            stderr = e.stderr.decode(
+                "utf-8") if isinstance(e.stderr, bytes) else str(e.stderr)
+            text = f"Execution failed (exit {e.exit_status}):\n{stderr}"
+            return _append_generated_image_markers(text, start_time)
         except (ImageNotFound, APIError) as e:
             return f"Docker error: {e}"
         except Exception as e:

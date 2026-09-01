@@ -1,7 +1,6 @@
 from core.models import User, Chat, MessageHistory
 import sqlite3
 import uuid
-import json
 from datetime import datetime, timedelta
 
 
@@ -217,11 +216,7 @@ class MessageHistory_DB:
             messages = []
             for row in rows:
                 user_text = row[0]
-                try:
-                    model_text = json.loads(
-                        row[1]) if row[1] is not None else None
-                except json.JSONDecodeError:
-                    model_text = row[1]
+                model_text = row[1]
                 messages.append({'user': user_text, 'model': model_text})
 
         messages.reverse()
@@ -233,13 +228,11 @@ class MessageHistory_DB:
             cursor = conn.cursor()
             id = str(uuid.uuid4())
             timestamp = datetime.now().isoformat()
-            assistant_output_str = json.dumps(
-                assistant_output) if assistant_output is not None else None
             try:
                 cursor.execute("""
                 INSERT INTO messages_history (id, input, output, chat_id, timestamp)
                 VALUES (?,?,?,?,?)
-    """, (id, user_input, assistant_output_str, chat_id, timestamp))
+    """, (id, user_input, assistant_output, chat_id, timestamp))
                 conn.commit()
             except sqlite3.IntegrityError:
                 raise ValueError("Message with this ID already exists.")
@@ -263,13 +256,11 @@ class MessageHistory_DB:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             timestamp = datetime.now().isoformat()
-            assistant_output_str = json.dumps(
-                assistant_output) if assistant_output is not None else None
             cursor.execute("""
             UPDATE messages_history
             SET output = ?, chat_id = ?, timestamp = ?
             WHERE id = ?
-    """, (assistant_output_str, chat_id, timestamp, message_history_id,))
+    """, (assistant_output, chat_id, timestamp, message_history_id,))
             conn.commit()
 
     def edit_message(self, id, user_input, assistant_output):
@@ -283,7 +274,7 @@ class MessageHistory_DB:
                 values.append(user_input)
             if assistant_output is not None:
                 updates.append("output = ?")
-                values.append(json.dumps(assistant_output))
+                values.append(assistant_output)
 
             if not updates:
                 raise ValueError("No new data provided for update.")

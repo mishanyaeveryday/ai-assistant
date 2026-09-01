@@ -1,6 +1,6 @@
 from PySide6.QtCore import Signal, QObject
 from core.models import User
-from interface.gui.view import RegistrationWindow, LoginWindow, MainWindow, NewChatWindow
+from interface.gui.view import RegistrationPage, LoginPage, ChatPage, NewChatWindow, AppWindow
 from core.services import AuthService, ChatService, MessageService, AIClientService
 from interface.gui.worker import AIWorker
 from interface.gui.mcp_tools_approval import HumanToolApproval
@@ -10,12 +10,20 @@ import asyncio
 
 
 class ViewManager:
+    """Owns the single AppWindow and switches which page its QStackedWidget
+    shows. Login/registration/chat are never separate windows - only the
+    "New chat" prompt (new_chat_view) is a real popup window."""
 
-    def __init__(self, main_view: MainWindow, new_chat_view: NewChatWindow, login_view: LoginWindow, registration_view: RegistrationWindow):
+    def __init__(self, app_window: AppWindow, main_view: ChatPage, new_chat_view: NewChatWindow, login_view: LoginPage, registration_view: RegistrationPage):
+        self.app_window = app_window
         self.login_view = login_view
         self.registration_view = registration_view
         self.main_view = main_view
         self.new_chat_view = new_chat_view
+
+        self.app_window.add_page(self.login_view)
+        self.app_window.add_page(self.registration_view)
+        self.app_window.add_page(self.main_view)
 
         self.login_view.switch_to_registration.connect(self.show_registration)
         self.registration_view.switch_to_login.connect(self.show_login)
@@ -24,23 +32,16 @@ class ViewManager:
         self.new_chat_view.on_submit.connect(self.hide_new_chat_view)
 
     def show_login(self):
-        self.main_view.hide()
-        self.registration_view.hide()
-        self.login_view.show()
+        self.app_window.show_page(self.login_view)
 
     def show_registration(self):
-        self.main_view.hide()
-        self.login_view.hide()
-        self.registration_view.show()
+        self.app_window.show_page(self.registration_view)
 
     def show_main_window(self):
-        self.login_view.hide()
-        self.registration_view.hide()
-        self.main_view.show()
+        self.app_window.show_page(self.main_view)
 
     def handle_logout(self):
-        self.main_view.hide()
-        self.login_view.show()
+        self.app_window.show_page(self.login_view)
 
     def show_new_chat_view(self):
         self.new_chat_view.show()
@@ -50,18 +51,12 @@ class ViewManager:
 
 
 class RegistrationController(QObject):
-    def __init__(self, model: AuthService, view: RegistrationWindow):
+    def __init__(self, model: AuthService, view: RegistrationPage):
         super().__init__()
         self._model = model
         self._view = view
 
         self._view.registration_submitted.connect(self.handle_registration)
-
-    def show(self):
-        """
-        Displays the registration window.
-        """
-        self._view.show()
 
     def handle_registration(self, user_data: dict):
         """
@@ -83,15 +78,12 @@ class RegistrationController(QObject):
 class LoginController(QObject):
     login_successful = Signal(User)
 
-    def __init__(self, model: AuthService, view: LoginWindow):
+    def __init__(self, model: AuthService, view: LoginPage):
         super().__init__()
         self._model = model
         self._view = view
 
         self._view.login_submitted.connect(self.handle_login)
-
-    def show(self):
-        self._view.show()
 
     def handle_login(self, user_data: dict):
         """
@@ -111,14 +103,11 @@ class LoginController(QObject):
 
 
 class MainWindowController(QObject):
-    def __init__(self, user: User, model: ChatService, view: MainWindow):
+    def __init__(self, user: User, model: ChatService, view: ChatPage):
         super().__init__()
         self._model = model
         self._view = view
         self._user = user
-
-    def show(self):
-        self._view.show()
 
     def update_chat_list_in_view(self):
         chat_objects = self._model.get_all_user_chats(user_id=self._user.id)
@@ -138,7 +127,7 @@ class MainWindowController(QObject):
 
 
 class MessageController(QObject):
-    def __init__(self, model: MessageService, view: MainWindow):
+    def __init__(self, model: MessageService, view: ChatPage):
         super().__init__()
         self._model = model
         self._view = view
@@ -159,7 +148,7 @@ class MessageController(QObject):
 
 
 class AIClientController(QObject):
-    def __init__(self, model: AIClientService, view: MainWindow, mcp_client: MCPClient):
+    def __init__(self, model: AIClientService, view: ChatPage, mcp_client: MCPClient):
         super().__init__()
         self._model = model
         self._view = view

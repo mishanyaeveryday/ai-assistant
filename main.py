@@ -2,10 +2,11 @@ from db.database import Chat_DB, MessageHistory_DB, User_DB
 from core.models import User
 from core.services import AuthService, ChatService, MessageService, AIClientService
 
-from interface.gui.view import RegistrationWindow, LoginWindow, MainWindow, NewChatWindow
+from interface.gui.view import RegistrationPage, LoginPage, ChatPage, NewChatWindow, AppWindow
 from interface.gui.controller import RegistrationController, LoginController, MainWindowController, ViewManager, MessageController, AIClientController
 
 import sys
+import os
 from PySide6.QtWidgets import QApplication, QMainWindow, QLabel
 from agent.mcp_client import MCPClient
 
@@ -13,7 +14,7 @@ from qasync import QEventLoop, asyncSlot
 import asyncio
 
 
-async def setup_mcp(client, view: MainWindow):
+async def setup_mcp(client, view: ChatPage):
     try:
         await client.connect_to_server('mcp_tools/web_search/server.py')
         await client.connect_to_server('mcp_tools/terminal_command/server.py')
@@ -43,12 +44,14 @@ async def main():
     ai_model = AIClientService(message_db=message_history_db_instance)
 
     # 3. Create Views
-    main_view = MainWindow()
+    app_window = AppWindow()
+    main_view = ChatPage()
     new_chat_window = NewChatWindow()
-    registration_view = RegistrationWindow()
-    login_view = LoginWindow()
+    registration_view = RegistrationPage()
+    login_view = LoginPage()
 
     view_manager = ViewManager(
+        app_window=app_window,
         main_view=main_view,
         new_chat_view=new_chat_window,
         login_view=login_view,
@@ -83,12 +86,18 @@ async def main():
 
     login_controller.login_successful.connect(on_login_success)
     view_manager.show_login()
+    app_window.show()
 
     while True:
         await asyncio.sleep(3600)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+
+    style_path = os.path.join(os.path.dirname(
+        __file__), "interface", "gui", "style.qss")
+    with open(style_path, encoding="utf-8") as f:
+        app.setStyleSheet(f.read())
 
     loop = QEventLoop(app)
     asyncio.set_event_loop(loop)

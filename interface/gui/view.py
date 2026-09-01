@@ -1,9 +1,203 @@
+import asyncio
+import json
+import re
+from pathlib import Path
+
+import shiboken6
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout,
-                               QPushButton, QLabel, QLineEdit, QFormLayout, QHBoxLayout, QFrame, QScrollArea)
+                               QPushButton, QLabel, QLineEdit, QFormLayout, QHBoxLayout, QFrame, QScrollArea,
+                               QButtonGroup, QGraphicsDropShadowEffect, QPlainTextEdit, QStackedWidget)
+from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtCore import Qt, Signal
 
+_IMAGE_MARKER_RE = re.compile(r"\[GENERATED_IMAGE:(.+?)\]")
+_MAX_IMAGE_WIDTH = 420
+_IMAGE_PLACEHOLDER_STYLE = (
+    "color: #8a8f98; font-style: italic; background-color: #f1f8e9; "
+    "border-radius: 5px; padding: 5px;"
+)
 
-class MainWindow(QMainWindow):
+
+def _split_text_and_images(raw_text) -> tuple[str, list[str]]:
+    raw_text = raw_text or ""
+    image_paths = [m.strip() for m in _IMAGE_MARKER_RE.findall(raw_text) if m.strip()]
+    clean_text = _IMAGE_MARKER_RE.sub("", raw_text).strip()
+    return clean_text, image_paths
+
+
+async def _load_image_into_label(path: str, label: QLabel) -> None:
+    """Read and decode the image off the GUI thread, then drop it into
+    `label` — unless the chat was switched away in the meantime and `label`
+    has already been torn down, in which case this just quietly does nothing."""
+    try:
+        data = await asyncio.to_thread(Path(path).read_bytes)
+    except OSError:
+        data = None
+
+    if not shiboken6.isValid(label):
+        return
+
+    pixmap = QPixmap()
+    if data is None or not pixmap.loadFromData(data):
+        label.setText("(image unavailable)")
+        label.setStyleSheet(_IMAGE_PLACEHOLDER_STYLE)
+        return
+
+    if pixmap.width() > _MAX_IMAGE_WIDTH:
+        pixmap = pixmap.scaledToWidth(
+            _MAX_IMAGE_WIDTH, Qt.TransformationMode.SmoothTransformation)
+    label.setPixmap(pixmap)
+    label.setStyleSheet("")
+
+
+def build_assistant_bubble(text: str) -> QWidget:
+    clean_text, image_paths = _split_text_and_images(text)
+
+    bubble = QWidget()
+    layout = QVBoxLayout(bubble)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(6)
+
+    if clean_text:
+        label = QLabel(f"<b>Assistant:</b><br>{clean_text}")
+        label.setWordWrap(True)
+        label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        label.setStyleSheet(
+            "background-color: #f1f8e9; border-radius: 5px; padding: 5px;")
+        label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(label)
+
+    for path in image_paths:
+        # Text renders immediately; each image loads on its own afterwards so a
+        # slow/large chart never blocks opening the chat, and switching chats
+        # again mid-load can't crash into an already-destroyed widget.
+        image_label = QLabel("Loading image…")
+        image_label.setStyleSheet(_IMAGE_PLACEHOLDER_STYLE)
+        image_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(image_label)
+        asyncio.ensure_future(_load_image_into_label(path, image_label))
+
+    return bubble
+
+
+class ApprovalBubble(QWidget):
+    """Inline chat cell asking the user to allow/deny a sensitive tool call,
+    used instead of a blocking popup dialog."""
+
+    decided = Signal(bool)
+
+    _MIN_DETAILS_LINES = 1
+    _MAX_DETAILS_LINES = 8
+    _LINE_HEIGHT_PX = 17
+    _DETAILS_PADDING_PX = 16
+
+    def __init__(self, tool_name: str, args: dict, parent=None):
+        super().__init__(parent)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        card = QFrame()
+        card.setStyleSheet(
+            "background-color: #fff8e1; border: 1px solid #f0d98c; border-radius: 8px;")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(10, 10, 10, 10)
+        card_layout.setSpacing(8)
+
+        title = QLabel(f"<b>Approval needed:</b> run <code>{tool_name}</code>")
+        title.setWordWrap(True)
+        card_layout.addWidget(title)
+
+        details_text = self._format_args(args)
+        details = QPlainTextEdit(details_text)
+        details.setReadOnly(True)
+        details.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        details.setFixedHeight(self._details_height(details_text))
+        details.setStyleSheet(
+            "font-family: Menlo, Consolas, monospace; font-size: 12px; "
+            "background-color: #fffdf5; border: 1px solid #e7d9a0; border-radius: 4px; padding: 4px;")
+        card_layout.addWidget(details)
+
+        self._status_label = QLabel("")
+        self._status_label.hide()
+        card_layout.addWidget(self._status_label)
+
+        self._button_row = QHBoxLayout()
+        self._deny_button = QPushButton("Deny")
+        self._approve_button = QPushButton("Approve")
+        self._deny_button.setStyleSheet(
+            "background-color: #e53935;")
+        self._approve_button.setStyleSheet(
+            "background-color: #43a047;")
+        self._button_row.addStretch(1)
+        self._button_row.addWidget(self._deny_button)
+        self._button_row.addWidget(self._approve_button)
+        card_layout.addLayout(self._button_row)
+
+        self._approve_button.clicked.connect(lambda: self._resolve(True))
+        self._deny_button.clicked.connect(lambda: self._resolve(False))
+
+        outer.addWidget(card)
+
+    @classmethod
+    def _details_height(cls, text: str) -> int:
+        line_count = text.count("\n") + 1
+        clamped = min(max(line_count, cls._MIN_DETAILS_LINES), cls._MAX_DETAILS_LINES)
+        return clamped * cls._LINE_HEIGHT_PX + cls._DETAILS_PADDING_PX
+
+    @staticmethod
+    def _format_args(args: dict) -> str:
+        if not args:
+            return "(no arguments)"
+        try:
+            return json.dumps(args, ensure_ascii=False, indent=2)
+        except (TypeError, ValueError):
+            return str(args)
+
+    def _resolve(self, approved: bool):
+        self._approve_button.setEnabled(False)
+        self._deny_button.setEnabled(False)
+        self._approve_button.hide()
+        self._deny_button.hide()
+        self._status_label.setStyleSheet(
+            f"font-weight: 600; color: {'#2e7d32' if approved else '#c62828'};")
+        self._status_label.setText("Approved" if approved else "Denied")
+        self._status_label.show()
+        self.decided.emit(approved)
+
+
+def apply_card_shadow(widget):
+    shadow = QGraphicsDropShadowEffect(widget)
+    shadow.setBlurRadius(24)
+    shadow.setXOffset(0)
+    shadow.setYOffset(4)
+    shadow.setColor(QColor(0, 0, 0, 40))
+    widget.setGraphicsEffect(shadow)
+
+
+class AppWindow(QMainWindow):
+    """The single top-level window for the app. It never closes/reopens -
+    logging in, registering, and chatting are all pages swapped in and out
+    of the same QStackedWidget, so the window itself keeps its position,
+    size, and identity throughout."""
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("AI-assistant")
+        self.resize(900, 550)
+
+        self.stack = QStackedWidget()
+        self.setCentralWidget(self.stack)
+
+    def add_page(self, page: QWidget) -> None:
+        self.stack.addWidget(page)
+
+    def show_page(self, page: QWidget) -> None:
+        self.stack.setCurrentWidget(page)
+
+
+class ChatPage(QWidget):
     logout_requested = Signal()
     chat_selected = Signal(str)
     new_chat = Signal()
@@ -11,19 +205,18 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("AI-assistant")
-        self.resize(900, 550)
 
-        self.central_widget = QWidget()
-        self.setCentralWidget(self.central_widget)
-        main_layout = QHBoxLayout(self.central_widget)
+        main_layout = QHBoxLayout(self)
 
         left_panel = QFrame()
+        left_panel.setObjectName("left_panel")
         left_panel.setFixedWidth(250)
-        left_panel.setStyleSheet("background-color: #f0f0f0;")
         left_panel_layout = QVBoxLayout(left_panel)
+        left_panel_layout.setContentsMargins(12, 16, 12, 16)
+        left_panel_layout.setSpacing(8)
 
         self.welcome_label = QLabel("Welcome!")
+        self.welcome_label.setObjectName("app_title")
         self.new_chat_button = QPushButton("+ New Chat")
         self.new_chat_button.clicked.connect(self.new_chat.emit)
         self.logout_button = QPushButton("Logout")
@@ -37,9 +230,12 @@ class MainWindow(QMainWindow):
         self.chats_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         scroll_area.setWidget(self.chats_container)
 
+        chats_label = QLabel("Your Chats")
+        chats_label.setObjectName("section_label")
+
         left_panel_layout.addWidget(self.welcome_label)
         left_panel_layout.addWidget(self.new_chat_button)
-        left_panel_layout.addWidget(QLabel("Your Chats:"))
+        left_panel_layout.addWidget(chats_label)
         left_panel_layout.addWidget(scroll_area)
         left_panel_layout.addStretch()
         left_panel_layout.addWidget(self.logout_button)
@@ -47,6 +243,7 @@ class MainWindow(QMainWindow):
         right_panel = QFrame()
         self.right_panel_layout = QVBoxLayout(right_panel)
         self.chat_info = QLabel("Select a chat to start or create a new one.")
+        self.chat_info.setObjectName("placeholder_text")
         self.chat_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.right_panel_layout.addWidget(self.chat_info)
 
@@ -54,6 +251,7 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(right_panel)
 
         self.chat_buttons = {}
+        self.chats_button_group = None
         self.message_layout = None
         self.chat_scroll_area = None
         self.current_chat_id = None
@@ -83,16 +281,10 @@ class MainWindow(QMainWindow):
                 "background-color: #e1f5fe; border-radius: 5px; padding: 5px;")
             user_message.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
-            assistant_message = QLabel(f"<b>Assistant:</b><br>{m['output']}")
-            assistant_message.setWordWrap(True)
-            assistant_message.setTextInteractionFlags(
-                Qt.TextInteractionFlag.TextSelectableByMouse)
-            assistant_message.setStyleSheet(
-                "background-color: #f1f8e9; border-radius: 5px; padding: 5px;")
-            assistant_message.setAlignment(Qt.AlignmentFlag.AlignLeft)
+            assistant_bubble = build_assistant_bubble(m['output'])
 
             self.messages_layout.addWidget(user_message)
-            self.messages_layout.addWidget(assistant_message)
+            self.messages_layout.addWidget(assistant_bubble)
 
         self.chat_scroll_area = QScrollArea()
         self.chat_scroll_area.setWidgetResizable(True)
@@ -139,15 +331,16 @@ class MainWindow(QMainWindow):
 
     def add_assistant_message(self, text: str):
         if self.messages_layout is not None:
-            assistant_message = QLabel(f"<b>Assistant:</b><br>{text}")
-            assistant_message.setWordWrap(True)
-            assistant_message.setTextInteractionFlags(
-                Qt.TextInteractionFlag.TextSelectableByMouse)
-            assistant_message.setStyleSheet(
-                "background-color: #f1f8e9; border-radius: 5px; padding: 5px;")
-            assistant_message.setAlignment(Qt.AlignmentFlag.AlignLeft)
-            self.messages_layout.addWidget(assistant_message)
+            assistant_bubble = build_assistant_bubble(text)
+            self.messages_layout.addWidget(assistant_bubble)
             self.scroll_to_bottom()
+
+    def add_approval_request(self, tool_name: str, args: dict) -> ApprovalBubble:
+        bubble = ApprovalBubble(tool_name, args)
+        if self.messages_layout is not None:
+            self.messages_layout.addWidget(bubble)
+            self.scroll_to_bottom()
+        return bubble
 
     def update_chats_list(self, chats_data: list[dict]):
         while self.chats_layout.count():
@@ -156,9 +349,12 @@ class MainWindow(QMainWindow):
             if widget is not None:
                 widget.deleteLater()
         self.chat_buttons.clear()
+        self.chats_button_group = QButtonGroup(self)
+        self.chats_button_group.setExclusive(True)
 
         if not chats_data:
             no_chats_label = QLabel("No chats yet.")
+            no_chats_label.setObjectName("placeholder_text")
             self.chats_layout.addWidget(no_chats_label)
             return
 
@@ -167,6 +363,9 @@ class MainWindow(QMainWindow):
             chat_title = chat.get('title', f'Chat {chat_id}')
 
             button = QPushButton(chat_title)
+            button.setObjectName("chat_button")
+            button.setCheckable(True)
+            self.chats_button_group.addButton(button)
 
             button.clicked.connect(
                 lambda _, cid=chat_id: self.chat_selected.emit(cid))
@@ -193,14 +392,8 @@ class NewChatWindow(QMainWindow):
         outer_layout = QVBoxLayout(self.central_widget)
         outer_layout.addStretch(1)
         self.frame = QFrame()
-        self.frame.setStyleSheet("""
-            QFrame {
-                background-color: #f5f5f5;
-                border: 2px solid #cccccc;
-                border-radius: 10px;
-                padding: 20px;
-            }
-        """)
+        self.frame.setObjectName("card")
+        apply_card_shadow(self.frame)
         self.frame.setMaximumWidth(400)
 
         frame_layout = QVBoxLayout(self.frame)
@@ -240,30 +433,20 @@ class NewChatWindow(QMainWindow):
         self.title_input.clear()
 
 
-class RegistrationWindow(QMainWindow):
+class RegistrationPage(QWidget):
 
     registration_submitted = Signal(dict)
     switch_to_login = Signal()
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("AI-assistant")
-        self.resize(900, 550)
-        self.central_widget = QWidget()
-        self.setCentralWidget(self.central_widget)
 
-        outer_layout = QVBoxLayout(self.central_widget)
+        outer_layout = QVBoxLayout(self)
         outer_layout.addStretch(1)
 
         self.frame = QFrame()
-        self.frame.setStyleSheet("""
-            QFrame {
-                background-color: #f5f5f5;
-                border: 2px solid #cccccc;
-                border-radius: 10px;
-                padding: 20px;
-            }
-        """)
+        self.frame.setObjectName("card")
+        apply_card_shadow(self.frame)
         self.frame.setMaximumWidth(400)
 
         frame_layout = QVBoxLayout(self.frame)
@@ -297,6 +480,7 @@ class RegistrationWindow(QMainWindow):
         button_layout.addStretch(1)
 
         self.main_title = QLabel("AI-assistant")
+        self.main_title.setObjectName("app_title")
         self.main_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.message_label = QLabel("")
@@ -339,29 +523,19 @@ class RegistrationWindow(QMainWindow):
         self.password_input.clear()
 
 
-class LoginWindow(QMainWindow):
+class LoginPage(QWidget):
     login_submitted = Signal(dict)
     switch_to_registration = Signal()
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("AI-assistant")
-        self.resize(900, 550)
-        self.central_widget = QWidget()
-        self.setCentralWidget(self.central_widget)
 
-        outer_layout = QVBoxLayout(self.central_widget)
+        outer_layout = QVBoxLayout(self)
         outer_layout.addStretch(1)
 
         self.frame = QFrame()
-        self.frame.setStyleSheet("""
-            QFrame {
-                background-color: #f5f5f5;
-                border: 2px solid #cccccc;
-                border-radius: 10px;
-                padding: 20px;
-            }
-        """)
+        self.frame.setObjectName("card")
+        apply_card_shadow(self.frame)
         self.frame.setMaximumWidth(400)
 
         frame_layout = QVBoxLayout(self.frame)
@@ -391,6 +565,7 @@ class LoginWindow(QMainWindow):
         button_layout.addStretch(1)
 
         self.main_title = QLabel("AI-assistant")
+        self.main_title.setObjectName("app_title")
         self.main_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.message_label = QLabel("")

@@ -1,0 +1,128 @@
+QWidget {
+    background-color: #f5f6f8;
+    color: #1f2430;
+    font-size: 14px;
+}
+
+QMainWindow {
+    background-color: #f5f6f8;
+}
+
+QLabel {
+    background: transparent;
+}
+
+QLabel#app_title {
+    font-size: 22px;
+    font-weight: 600;
+    color: #3d5afe;
+}
+
+QLabel#placeholder_text {
+    color: #8a8f98;
+    font-size: 15px;
+}
+
+QLabel#section_label {
+    color: #8a8f98;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 2px;
+}
+
+/* --- Buttons --- */
+QPushButton {
+    background-color: #3d5afe;
+    color: #ffffff;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 16px;
+}
+
+QPushButton:hover {
+    background-color: #304ffe;
+}
+
+QPushButton:pressed {
+    background-color: #2438c9;
+}
+
+QPushButton:disabled {
+    background-color: #c8ccd6;
+    color: #ffffff;
+}
+
+/* Chat list buttons: flat, own selected state */
+QPushButton#chat_button {
+    background-color: transparent;
+    color: #1f2430;
+    text-align: left;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-weight: 400;
+}
+
+QPushButton#chat_button:hover {
+    background-color: #e8eaf6;
+}
+
+QPushButton#chat_button:pressed {
+    background-color: #dde0f3;
+}
+
+QPushButton#chat_button:checked {
+    background-color: #3d5afe;
+    color: #ffffff;
+    font-weight: 600;
+}
+
+/* --- Inputs --- */
+QLineEdit {
+    border: 1px solid #dcdfe6;
+    border-radius: 8px;
+    padding: 8px;
+    background-color: #ffffff;
+    selection-background-color: #a6b3ff;
+}
+
+QLineEdit:focus {
+    border: 1px solid #3d5afe;
+}
+
+/* --- Panels & Cards --- */
+QFrame#left_panel {
+    background-color: #ffffff;
+    border-right: 1px solid #e5e7ec;
+}
+
+QFrame#card {
+    background-color: #ffffff;
+    border: 1px solid #e5e7ec;
+    border-radius: 14px;
+    padding: 20px;
+}
+
+/* --- Scroll --- */
+QScrollArea {
+    border: none;
+    background: transparent;
+}
+
+QScrollBar:vertical {
+    width: 8px;
+    background: transparent;
+}
+
+QScrollBar::handle:vertical {
+    background: #c8ccd6;
+    border-radius: 4px;
+    min-height: 24px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #a9aeb9;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
