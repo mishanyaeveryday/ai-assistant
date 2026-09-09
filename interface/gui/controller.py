@@ -1,6 +1,6 @@
 from PySide6.QtCore import Signal, QObject
 from core.models import User
-from interface.gui.view import RegistrationPage, LoginPage, ChatPage, NewChatWindow, AppWindow
+from interface.gui.view import RegistrationPage, LoginPage, ChatPage, AppWindow
 from core.services import AuthService, ChatService, MessageService, AIClientService
 from interface.gui.worker import AIWorker
 from interface.gui.mcp_tools_approval import HumanToolApproval
@@ -11,15 +11,14 @@ import asyncio
 
 class ViewManager:
     """Owns the single AppWindow and switches which page its QStackedWidget
-    shows. Login/registration/chat are never separate windows - only the
-    "New chat" prompt (new_chat_view) is a real popup window."""
+    shows. Login, registration and chat are all pages of that one window, and
+    naming a new chat happens in an inline cell, so the app has no popups."""
 
-    def __init__(self, app_window: AppWindow, main_view: ChatPage, new_chat_view: NewChatWindow, login_view: LoginPage, registration_view: RegistrationPage):
+    def __init__(self, app_window: AppWindow, main_view: ChatPage, login_view: LoginPage, registration_view: RegistrationPage):
         self.app_window = app_window
         self.login_view = login_view
         self.registration_view = registration_view
         self.main_view = main_view
-        self.new_chat_view = new_chat_view
 
         self.app_window.add_page(self.login_view)
         self.app_window.add_page(self.registration_view)
@@ -28,8 +27,6 @@ class ViewManager:
         self.login_view.switch_to_registration.connect(self.show_registration)
         self.registration_view.switch_to_login.connect(self.show_login)
         self.main_view.logout_requested.connect(self.handle_logout)
-        self.main_view.new_chat.connect(self.show_new_chat_view)
-        self.new_chat_view.on_submit.connect(self.hide_new_chat_view)
 
     def show_login(self):
         self.app_window.show_page(self.login_view)
@@ -42,12 +39,6 @@ class ViewManager:
 
     def handle_logout(self):
         self.app_window.show_page(self.login_view)
-
-    def show_new_chat_view(self):
-        self.new_chat_view.show()
-
-    def hide_new_chat_view(self):
-        self.new_chat_view.hide()
 
 
 class RegistrationController(QObject):
@@ -109,19 +100,35 @@ class MainWindowController(QObject):
         self._view = view
         self._user = user
 
+        self._view.new_chat_requested.connect(self.handle_create_new_chat)
+        self._view.chat_delete_requested.connect(self.handle_delete_chat)
+
+    def disconnect_view(self):
+        """A fresh controller is built on every login, so the previous one has
+        to let go of the (long-lived) view first - otherwise a second login
+        would handle each action twice."""
+        self._view.new_chat_requested.disconnect(self.handle_create_new_chat)
+        self._view.chat_delete_requested.disconnect(self.handle_delete_chat)
+
     def update_chat_list_in_view(self):
         chat_objects = self._model.get_all_user_chats(user_id=self._user.id)
         chats_for_view = [{'id': chat.id, 'title': chat.title}
                           for chat in chat_objects]
         self._view.update_chats_list(chats_for_view)
 
-    def handle_create_new_chat(self, chat_data: dict):
-        chat_title = chat_data['title']
-        if not chat_title:
-            print("Chat title cannot be empty.")
-            return
+    def handle_create_new_chat(self, chat_title: str):
         self._model.create_new_chat(
             user_id=self._user.id, chat_title=chat_title)
+
+        self.update_chat_list_in_view()
+
+    def handle_delete_chat(self, chat_id: str):
+        if not self._model.delete_chat(chat_id=chat_id):
+            print(f"Chat {chat_id} could not be deleted.")
+            return
+
+        if self._view.current_chat_id == chat_id:
+            self._view.clear_chat_view()
 
         self.update_chat_list_in_view()
 

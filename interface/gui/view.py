@@ -6,12 +6,14 @@ from pathlib import Path
 import shiboken6
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout,
                                QPushButton, QLabel, QLineEdit, QFormLayout, QHBoxLayout, QFrame, QScrollArea,
-                               QButtonGroup, QGraphicsDropShadowEffect, QPlainTextEdit, QStackedWidget)
+                               QButtonGroup, QGraphicsDropShadowEffect, QPlainTextEdit, QStackedWidget,
+                               QMessageBox, QInputDialog, QDialog)
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtCore import Qt, Signal
 
 _IMAGE_MARKER_RE = re.compile(r"\[GENERATED_IMAGE:(.+?)\]")
 _MAX_IMAGE_WIDTH = 420
+_CHAT_TITLE_FIELD_WIDTH = 280
 _IMAGE_PLACEHOLDER_STYLE = (
     "color: #8a8f98; font-style: italic; background-color: #f1f8e9; "
     "border-radius: 5px; padding: 5px;"
@@ -20,7 +22,8 @@ _IMAGE_PLACEHOLDER_STYLE = (
 
 def _split_text_and_images(raw_text) -> tuple[str, list[str]]:
     raw_text = raw_text or ""
-    image_paths = [m.strip() for m in _IMAGE_MARKER_RE.findall(raw_text) if m.strip()]
+    image_paths = [m.strip()
+                   for m in _IMAGE_MARKER_RE.findall(raw_text) if m.strip()]
     clean_text = _IMAGE_MARKER_RE.sub("", raw_text).strip()
     return clean_text, image_paths
 
@@ -143,7 +146,8 @@ class ApprovalBubble(QWidget):
     @classmethod
     def _details_height(cls, text: str) -> int:
         line_count = text.count("\n") + 1
-        clamped = min(max(line_count, cls._MIN_DETAILS_LINES), cls._MAX_DETAILS_LINES)
+        clamped = min(max(line_count, cls._MIN_DETAILS_LINES),
+                      cls._MAX_DETAILS_LINES)
         return clamped * cls._LINE_HEIGHT_PX + cls._DETAILS_PADDING_PX
 
     @staticmethod
@@ -200,7 +204,8 @@ class AppWindow(QMainWindow):
 class ChatPage(QWidget):
     logout_requested = Signal()
     chat_selected = Signal(str)
-    new_chat = Signal()
+    chat_delete_requested = Signal(str)
+    new_chat_requested = Signal(str)
     send_input = Signal(str, str)
 
     def __init__(self):
@@ -218,7 +223,7 @@ class ChatPage(QWidget):
         self.welcome_label = QLabel("Welcome!")
         self.welcome_label.setObjectName("app_title")
         self.new_chat_button = QPushButton("+ New Chat")
-        self.new_chat_button.clicked.connect(self.new_chat.emit)
+        self.new_chat_button.clicked.connect(self.prompt_new_chat)
         self.logout_button = QPushButton("Logout")
         self.logout_button.clicked.connect(self.logout_requested.emit)
 
@@ -252,19 +257,43 @@ class ChatPage(QWidget):
 
         self.chat_buttons = {}
         self.chats_button_group = None
-        self.message_layout = None
+        self.messages_layout = None
         self.chat_scroll_area = None
+        self.message_input = None
+        self.send_button = None
         self.current_chat_id = None
 
     def set_user_data(self, user_data: dict):
         self.welcome_label.setText(f"Welcome, {user_data['username']}!")
 
-    def show_chat(self, chat_id: str, message_data: dict):
-        self.current_chat_id = chat_id
+    def _clear_right_panel(self):
+        """Tears down whatever the right panel is showing and drops every
+        reference to it. The widgets are gone on the C++ side after this, so
+        the attributes must not keep pointing at them."""
         for i in reversed(range(self.right_panel_layout.count())):
             item = self.right_panel_layout.takeAt(i)
             if item.widget():
                 item.widget().deleteLater()
+
+        self.messages_layout = None
+        self.chat_scroll_area = None
+        self.message_input = None
+        self.send_button = None
+
+    def clear_chat_view(self):
+        """Returns the right panel to its "nothing selected" state, used when
+        the chat that was open gets deleted."""
+        self._clear_right_panel()
+        self.current_chat_id = None
+
+        self.chat_info = QLabel("Select a chat to start or create a new one.")
+        self.chat_info.setObjectName("placeholder_text")
+        self.chat_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.right_panel_layout.addWidget(self.chat_info)
+
+    def show_chat(self, chat_id: str, message_data: dict):
+        self._clear_right_panel()
+        self.current_chat_id = chat_id
 
         chat_container = QWidget()
         self.messages_layout = QVBoxLayout(chat_container)
@@ -295,7 +324,12 @@ class ChatPage(QWidget):
         self.message_input.setPlaceholderText("Start typing a prompt")
         self.send_button = QPushButton("Run")
 
-        bottom_layout = QHBoxLayout()
+        # The input row lives in its own widget rather than a bare sub-layout:
+        # the panel is torn down widget by widget, and a plain layout would be
+        # skipped there, leaving the old input box painted over the panel.
+        bottom_row = QWidget()
+        bottom_layout = QHBoxLayout(bottom_row)
+        bottom_layout.setContentsMargins(0, 0, 0, 0)
         bottom_layout.addWidget(self.message_input)
         bottom_layout.addWidget(self.send_button)
 
@@ -303,15 +337,21 @@ class ChatPage(QWidget):
         self.message_input.returnPressed.connect(self.send_prompt)
 
         self.right_panel_layout.addWidget(self.chat_scroll_area)
-        self.right_panel_layout.addLayout(bottom_layout)
+        self.right_panel_layout.addWidget(bottom_row)
 
         self.scroll_to_bottom()
 
     def set_input_enabled(self, enabled: bool):
+        # The chat can be closed (deleted) while a request is still in flight,
+        # in which case these widgets no longer exist.
+        if self.send_button is None or not shiboken6.isValid(self.send_button):
+            return
         self.send_button.setEnabled(enabled)
         self.message_input.setEnabled(enabled)
 
     def send_prompt(self):
+        if self.message_input is None:
+            return
         prompt_text = self.message_input.text().strip()
 
         if prompt_text and self.current_chat_id:
@@ -362,6 +402,12 @@ class ChatPage(QWidget):
             chat_id = chat['id']
             chat_title = chat.get('title', f'Chat {chat_id}')
 
+            row = QWidget()
+            row.setObjectName("chat_row")
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(2)
+
             button = QPushButton(chat_title)
             button.setObjectName("chat_button")
             button.setCheckable(True)
@@ -370,67 +416,76 @@ class ChatPage(QWidget):
             button.clicked.connect(
                 lambda _, cid=chat_id: self.chat_selected.emit(cid))
 
-            self.chats_layout.addWidget(button)
+            delete_button = QPushButton("✕")
+            delete_button.setObjectName("chat_delete_button")
+            delete_button.setToolTip(f'Delete "{chat_title}"')
+            delete_button.setFixedSize(24, 24)
+            delete_button.clicked.connect(
+                lambda _, cid=chat_id, title=chat_title: self.confirm_delete_chat(cid, title))
+
+            row_layout.addWidget(button, 1)
+            row_layout.addWidget(delete_button)
+
+            self.chats_layout.addWidget(row)
             self.chat_buttons[chat_id] = button
+
+        # The button group is rebuilt from scratch, so the chat that is open
+        # on the right has to be re-marked as the selected one.
+        open_button = self.chat_buttons.get(self.current_chat_id)
+        if open_button is not None:
+            open_button.setChecked(True)
+
+    def prompt_new_chat(self):
+        """Asks for the new chat's title in a modal dialog, the same kind the
+        delete confirmation uses. An empty title is rejected and the dialog
+        reopens rather than closing on a chat that was never created."""
+        title = ""
+        while True:
+            title, accepted = self._ask_chat_title(title)
+            if not accepted:
+                return
+
+            title = title.strip()
+            if title:
+                self.new_chat_requested.emit(title)
+                return
+
+            QMessageBox.warning(self, "New chat", "Title cannot be empty.")
+
+    def _ask_chat_title(self, prefill: str) -> tuple[str, bool]:
+        """Builds the dialog by hand instead of using QInputDialog.getText:
+        the convenience helper sizes the text field to the label, which comes
+        out too cramped for a chat title. Widening the field is what widens
+        the dialog - QInputDialog ignores resize() on itself."""
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle("New chat")
+        dialog.setLabelText("Chat title:")
+        dialog.setTextEchoMode(QLineEdit.EchoMode.Normal)
+        dialog.setTextValue(prefill)
+
+        field = dialog.findChild(QLineEdit)
+        if field is not None:
+            field.setMinimumWidth(_CHAT_TITLE_FIELD_WIDTH)
+
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        return dialog.textValue(), accepted
+
+    def confirm_delete_chat(self, chat_id: str, chat_title: str):
+        answer = QMessageBox.question(
+            self,
+            "Delete chat",
+            f'Delete "{chat_title}" and all of its messages?\n\n'
+            "This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.chat_delete_requested.emit(chat_id)
 
     def scroll_to_bottom(self):
         if self.chat_scroll_area:
             self.chat_scroll_area.verticalScrollBar().setValue(
                 self.chat_scroll_area.verticalScrollBar().maximum())
-
-
-class NewChatWindow(QMainWindow):
-    on_submit = Signal(dict)
-
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Create new chat")
-        self.setFixedSize(400, 200)
-        self.central_widget = QWidget()
-        self.setCentralWidget(self.central_widget)
-
-        outer_layout = QVBoxLayout(self.central_widget)
-        outer_layout.addStretch(1)
-        self.frame = QFrame()
-        self.frame.setObjectName("card")
-        apply_card_shadow(self.frame)
-        self.frame.setMaximumWidth(400)
-
-        frame_layout = QVBoxLayout(self.frame)
-
-        self.title_input = QLineEdit()
-        self.title_input.setPlaceholderText("Enter title")
-
-        form_layout = QFormLayout()
-
-        form_layout.addRow("Title:", self.title_input)
-
-        self.submit_button = QPushButton("Apply")
-        self.submit_button.setMaximumSize(150, 40)
-
-        button_layout = QHBoxLayout()
-        button_layout.addStretch(1)
-        button_layout.addWidget(self.submit_button)
-
-        frame_layout.addLayout(form_layout)
-        frame_layout.addLayout(button_layout)
-
-        frame_container = QHBoxLayout()
-        frame_container.addStretch(1)
-        frame_container.addWidget(self.frame)
-        frame_container.addStretch(1)
-
-        outer_layout.addLayout(frame_container)
-        outer_layout.addStretch(1)
-
-        self.submit_button.clicked.connect(self.apply)
-
-    def apply(self):
-        chat_data = {
-            "title": self.title_input.text(),
-        }
-        self.on_submit.emit(chat_data)
-        self.title_input.clear()
 
 
 class RegistrationPage(QWidget):

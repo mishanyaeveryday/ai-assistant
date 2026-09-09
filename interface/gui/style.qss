@@ -76,6 +76,31 @@ QPushButton#chat_button:checked {
     font-weight: 600;
 }
 
+/* Chat list row: transparent so it doesn't paint a grey strip on the
+   white left panel */
+QWidget#chat_row {
+    background: transparent;
+}
+
+/* Delete button next to each chat: quiet until hovered */
+QPushButton#chat_delete_button {
+    background-color: transparent;
+    color: #8a8f98;
+    border-radius: 12px;
+    padding: 0px;
+    font-size: 13px;
+}
+
+QPushButton#chat_delete_button:hover {
+    background-color: #ffe2e2;
+    color: #c62828;
+}
+
+QPushButton#chat_delete_button:pressed {
+    background-color: #ffcdd2;
+    color: #b71c1c;
+}
+
 /* --- Inputs --- */
 QLineEdit {
     border: 1px solid #dcdfe6;

@@ -61,6 +61,9 @@ class ChatService:
     def create_new_chat(self, user_id: str, chat_title: str):
         self.chat_db.add_chat(title=chat_title, user_id=user_id)
 
+    def delete_chat(self, chat_id: str) -> bool:
+        return self.chat_db.delete_chat(chat_id=chat_id)
+
 
 class MessageService:
     def __init__(self, message_db: MessageHistory_DB):

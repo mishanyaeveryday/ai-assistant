@@ -2,7 +2,7 @@ from db.database import Chat_DB, MessageHistory_DB, User_DB
 from core.models import User
 from core.services import AuthService, ChatService, MessageService, AIClientService
 
-from interface.gui.view import RegistrationPage, LoginPage, ChatPage, NewChatWindow, AppWindow
+from interface.gui.view import RegistrationPage, LoginPage, ChatPage, AppWindow
 from interface.gui.controller import RegistrationController, LoginController, MainWindowController, ViewManager, MessageController, AIClientController
 
 import sys
@@ -46,14 +46,12 @@ async def main():
     # 3. Create Views
     app_window = AppWindow()
     main_view = ChatPage()
-    new_chat_window = NewChatWindow()
     registration_view = RegistrationPage()
     login_view = LoginPage()
 
     view_manager = ViewManager(
         app_window=app_window,
         main_view=main_view,
-        new_chat_view=new_chat_window,
         login_view=login_view,
         registration_view=registration_view
     )
@@ -75,13 +73,14 @@ async def main():
 
     def on_login_success(user: User):
         nonlocal main_window_controller
+        if main_window_controller is not None:
+            main_window_controller.disconnect_view()
+
         main_window_controller = MainWindowController(
             user=user, model=chat_model, view=main_view)
         main_view.set_user_data(
             {"username": user.username, "email": user.email})
         main_window_controller.update_chat_list_in_view()
-        new_chat_window.on_submit.connect(
-            main_window_controller.handle_create_new_chat)
         view_manager.show_main_window()
 
     login_controller.login_successful.connect(on_login_success)

@@ -142,6 +142,19 @@ class Chat_DB:
             except sqlite3.IntegrityError:
                 raise ValueError("Chat with this ID already exists.")
 
+    def delete_chat(self, chat_id):
+        """Removes the chat together with its message history. Both tables
+        live in the same database file, so a single transaction keeps them
+        from drifting apart and leaving orphaned messages behind."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                'DELETE FROM messages_history WHERE chat_id = ?', (chat_id,))
+            cursor.execute('DELETE FROM chats WHERE id = ?', (chat_id,))
+            deleted = cursor.rowcount
+            conn.commit()
+        return deleted > 0
+
 
 class MessageHistory_DB:
     def __init__(self, db_name='ai-assistent.sqlite3'):
