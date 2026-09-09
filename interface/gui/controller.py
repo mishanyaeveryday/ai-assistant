@@ -5,7 +5,6 @@ from core.services import AuthService, ChatService, MessageService, AIClientServ
 from interface.gui.worker import AIWorker
 from interface.gui.mcp_tools_approval import HumanToolApproval
 from agent.tools_policy import ToolsApprovalPolicy
-from agent.mcp_client import MCPClient
 import asyncio
 
 
@@ -155,11 +154,11 @@ class MessageController(QObject):
 
 
 class AIClientController(QObject):
-    def __init__(self, model: AIClientService, view: ChatPage, mcp_client: MCPClient):
+    def __init__(self, model: AIClientService, view: ChatPage, mcp_registry):
         super().__init__()
         self._model = model
         self._view = view
-        self._mcp_client = mcp_client
+        self._mcp_registry = mcp_registry
         self._tool_approval = HumanToolApproval(parent_widget=self._view)
         self._approval_policy = ToolsApprovalPolicy()
         self._view.send_input.connect(self.handle_prompt)
@@ -171,7 +170,7 @@ class AIClientController(QObject):
             self._model,
             chat_id,
             user_input,
-            mcp_client=self._mcp_client,
+            mcp_registry=self._mcp_registry,
             approve_tool=self._tool_approval.approve,
             tools_approval_policy=self._approval_policy,
         )

@@ -13,11 +13,11 @@ _IMAGE_MARKER_RE = re.compile(r"\[GENERATED_IMAGE:(.+?)\]")
 class ToolsAdapter:
     def __init__(
         self,
-        mcp_client,
+        mcp_registry,
         tools_approval_policy: ToolsApprovalPolicy,
         approve_tool: ApproveToolFn | None = None,
     ):
-        self.mcp_client = mcp_client
+        self.mcp_registry = mcp_registry
         self.tools_approval_policy = tools_approval_policy
         self.approve_tool = approve_tool
         self.generated_images: list[str] = []
@@ -25,14 +25,22 @@ class ToolsAdapter:
     def mcp_tools_to_gemini_declarations(self, mcp_tools):
         declaration = []
         for tool in mcp_tools:
-            print(f'Tool name: {tool.name}, description: {tool.description}')
-            d = types.FunctionDeclaration(
-                name=tool.name, description=tool.description, parameters=tool.inputSchema)
-            declaration.append(d)
+            # Cached catalogue entries are plain dicts; a caller passing live
+            # MCP tool objects (selected_tool) still works.
+            if isinstance(tool, dict):
+                name = tool.get('name')
+                description = tool.get('description') or ''
+                schema = tool.get('inputSchema') or {}
+            else:
+                name, description, schema = (
+                    tool.name, tool.description, tool.inputSchema)
+            declaration.append(types.FunctionDeclaration(
+                name=name, description=description, parameters=schema))
         return types.Tool(function_declarations=declaration)
 
     async def call_and_format(self, name: str, args: dict):
-        if self.tools_approval_policy.requires_approval(name):
+        is_builtin = self.mcp_registry.is_builtin_tool(name)
+        if self.tools_approval_policy.requires_approval(name, is_builtin=is_builtin):
             if self.approve_tool is None:
                 return self._denial_part(
                     name, "Approval is required but no approve handler was configured."
@@ -40,7 +48,7 @@ class ToolsAdapter:
             allowed = await self.approve_tool(name, args or {})
             if not allowed:
                 return self._denial_part(name, "User denied execution.")
-        result = await self.mcp_client.call_tool(name, args or {})
+        result = await self.mcp_registry.call_tool(name, args or {})
         self._collect_generated_images(result)
         return types.Part.from_function_response(name=name, response={"result": result})
 

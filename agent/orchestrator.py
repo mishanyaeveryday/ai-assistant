@@ -1,6 +1,5 @@
 from config.settings import GENAI_API_KEY, GENAI_MODEL
 from core.llm_client import GeminiClient
-from agent.mcp_client import MCPClient
 from google.genai import types
 from agent.tools_adapter import ApproveToolFn, ToolsAdapter
 from agent.tools_policy import ToolsApprovalPolicy
@@ -26,7 +25,7 @@ class AIClient:
     def __init__(
         self,
         memory,
-        mcp_client: MCPClient,
+        mcp_registry,
         tools_approval_policy: ToolsApprovalPolicy | None = None,
         approve_tool: ApproveToolFn | None = None,
         model=GENAI_MODEL,
@@ -35,9 +34,9 @@ class AIClient:
             llm_model=model,
             api_key=GENAI_API_KEY
         )
-        self.mcp_client = mcp_client
+        self.mcp_registry = mcp_registry
         self.tools_adapter = ToolsAdapter(
-            mcp_client,
+            mcp_registry,
             tools_approval_policy or ToolsApprovalPolicy(),
             approve_tool=approve_tool,
         )
@@ -94,9 +93,11 @@ guments.""")
         contents.append(types.Content(role='user', parts=[
                         types.Part.from_text(text=user_prompt)]))
 
-        raw_tools = selected_tool or await self.mcp_client.get_tools()
-        gemini_tools = [
-            self.tools_adapter.mcp_tools_to_gemini_declarations(mcp_tools=raw_tools)]
+        raw_tools = selected_tool or await self.mcp_registry.get_tools()
+        # No enabled servers means no tool list at all: an empty Tool with zero
+        # declarations is rejected by the API.
+        gemini_tools = [self.tools_adapter.mcp_tools_to_gemini_declarations(
+            mcp_tools=raw_tools)] if raw_tools else None
         # print(f'Gemini Tools:{gemini_tools}')
         response = await self.thinking_loop(
             count=5,

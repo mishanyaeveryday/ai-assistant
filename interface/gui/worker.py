@@ -1,6 +1,5 @@
 from PySide6.QtCore import QObject, Signal
 from agent.orchestrator import AIClient
-from agent.mcp_client import MCPClient
 from agent.tools_adapter import ApproveToolFn
 from agent.tools_policy import ToolsApprovalPolicy
 from core.services import AIClientService
@@ -15,7 +14,7 @@ class AIWorker(QObject):
         model: AIClientService,
         chat_id,
         user_input,
-        mcp_client: MCPClient,
+        mcp_registry,
         approve_tool: ApproveToolFn | None,
         tools_approval_policy: ToolsApprovalPolicy | None = None,
     ):
@@ -23,7 +22,7 @@ class AIWorker(QObject):
         self._model = model
         self.chat_id = chat_id
         self.user_input = user_input
-        self.mcp_client = mcp_client
+        self.mcp_registry = mcp_registry
         self.approve_tool = approve_tool
         self.tools_approval_policy = tools_approval_policy
 
@@ -33,7 +32,7 @@ class AIWorker(QObject):
             print(f"Memory {memory}")
 
             ai_client = AIClient(
-                mcp_client=self.mcp_client,
+                mcp_registry=self.mcp_registry,
                 memory=memory,
                 approve_tool=self.approve_tool,
                 tools_approval_policy=self.tools_approval_policy or ToolsApprovalPolicy(),
