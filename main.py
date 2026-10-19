@@ -3,8 +3,8 @@ from core.models import User
 from core.services import AuthService, ChatService, MessageService, AIClientService, MCPServerService, SecretService
 from agent.mcp_registry import MCPRegistry
 
-from interface.gui.view import RegistrationPage, LoginPage, ChatPage, SettingsPage, AppWindow
-from interface.gui.controller import RegistrationController, LoginController, MainWindowController, ViewManager, MessageController, AIClientController
+from interface.gui.view import RegistrationPage, LoginPage, ChatPage, SettingsPage, AppWindow, MCPServersSection
+from interface.gui.controller import RegistrationController, LoginController, MainWindowController, ViewManager, MessageController, AIClientController, MCPServersController
 
 import sys
 import os
@@ -29,27 +29,6 @@ async def sweep_idle_mcp_servers(client: MCPClient):
             raise
         except Exception as e:
             print(f"[MCP] Idle sweep error: {e}")
-
-
-async def probe_user_mcp_servers(mcp_server_model: MCPServerService, user: User):
-    """Checks every MCP server this user has, in the background so the chat
-    window is usable right away. The service records each outcome and switches
-    off whatever fails, so this only has to report what it found."""
-    try:
-        results = await mcp_server_model.probe_user_servers(user_id=user.id)
-    except asyncio.CancelledError:
-        raise
-    except Exception as e:
-        print(f"[MCP] Probe failed: {e}")
-        return
-
-    broken = mcp_server_model.get_broken_servers(user_id=user.id)
-    print(f"[MCP] Checked {len(results)} server(s) for {user.username}; "
-          f"{len(broken)} unavailable")
-    for server in broken:
-        detail = (server.last_error or "").splitlines()
-        print(f"[MCP]   {server.name} disabled — {server.last_error_code}"
-              f"{': ' + detail[0] if detail else ''}")
 
 
 async def main():
@@ -80,6 +59,8 @@ async def main():
     registration_view = RegistrationPage()
     login_view = LoginPage()
     settings_view = SettingsPage()
+    mcp_servers_view = MCPServersSection()
+    settings_view.add_section(mcp_servers_view)
 
     view_manager = ViewManager(
         app_window=app_window,
@@ -105,15 +86,16 @@ async def main():
         model=ai_model, view=main_view, mcp_registry=mcp_registry)
 
     main_window_controller = None
-    mcp_probe_task = None
+    mcp_servers_controller = None
 
     def on_login_success(user: User):
-        nonlocal main_window_controller, mcp_probe_task
+        nonlocal main_window_controller, mcp_servers_controller
         if main_window_controller is not None:
             main_window_controller.disconnect_view()
-        # A probe still running from a previous login is for the wrong user.
-        if mcp_probe_task is not None and not mcp_probe_task.done():
-            mcp_probe_task.cancel()
+        # Also cancels checks still running from a previous login - they are
+        # for the wrong user.
+        if mcp_servers_controller is not None:
+            mcp_servers_controller.disconnect_view()
 
         # Backfills the built-in servers for this user; a no-op once they are
         # already recorded.
@@ -128,13 +110,14 @@ async def main():
         main_view.set_user_data(user_data)
         settings_view.set_user_data(user_data)
         main_window_controller.update_chat_list_in_view()
+        mcp_servers_controller = MCPServersController(
+            user=user, model=mcp_server_model, view=mcp_servers_view,
+            mcp_registry=mcp_registry)
         view_manager.show_main_window()
 
         # Kicked off after the window is up so a slow or hanging server never
-        # holds up the login. The task is kept in a variable because asyncio
-        # only holds a weak reference to it.
-        mcp_probe_task = asyncio.create_task(
-            probe_user_mcp_servers(mcp_server_model, user))
+        # holds up the login.
+        mcp_servers_controller.check_all()
 
     login_controller.login_successful.connect(on_login_success)
     view_manager.show_login()

@@ -1,7 +1,7 @@
 import bcrypt
 from datetime import datetime
 from config.settings import BUILTIN_MCP_SERVERS
-from core.crypto import SecretBox, scrub, substitute
+from core.crypto import SecretBox, referenced_names, scrub, secret_ref, substitute
 from core.models import User, Chat, MessageHistory, MCPServer
 from db.database import User_DB, Chat_DB, MessageHistory_DB, MCPServer_DB, Secret_DB
 
@@ -105,6 +105,13 @@ class SecretService:
         return substitute(value, lambda name: self.get_secret(user_id, name))
 
 
+def server_secret_name(server_name: str, kind: str, key: str) -> str:
+    """Name of the secret holding one env/header value of a server the user
+    added. Server names cannot contain a dot, so these never collide between
+    servers."""
+    return f"{server_name}.{kind}.{key}"
+
+
 class MCPServerService:
     def __init__(self, mcp_server_db: MCPServer_DB, secret_service: SecretService = None):
         self.mcp_server_db = mcp_server_db
@@ -144,6 +151,63 @@ class MCPServerService:
             user_id=user_id, name=name, transport=MCPServer.HTTP,
             url=url, headers=headers, description=description)
 
+    def add_user_server(self, user_id: str, name: str, transport: str,
+                        command: str = None, args: list = None, env: dict = None,
+                        url: str = None, headers: dict = None,
+                        description: str = None) -> str | None:
+        """Adds a server the user configured in settings. Every env and header
+        value is moved into the encrypted secrets table first, so the row only
+        ever holds ${secret:...} references - those values are where tokens go.
+
+        Returns None if the user already has a server with this name. That is
+        checked before any secret is written: a rejected duplicate must not
+        overwrite the credentials of the server that already has the name."""
+        if self.get_server_by_name(user_id, name) is not None:
+            return None
+
+        env = self._protect_values(user_id, name, 'env', env)
+        headers = self._protect_values(user_id, name, 'header', headers)
+        if transport == MCPServer.HTTP:
+            return self.add_http_server(
+                user_id, name, url=url, headers=headers, description=description)
+        return self.add_stdio_server(
+            user_id, name, command=command, args=args, env=env,
+            description=description)
+
+    def _protect_values(self, user_id: str, server_name: str, kind: str,
+                        pairs: dict | None) -> dict | None:
+        """Stores each plain value as a secret and returns the pairs with
+        references in their place. A value that already references a secret
+        is kept as written, and an empty one has nothing to hide."""
+        if not pairs:
+            return pairs
+        protected = {}
+        for key, value in pairs.items():
+            if not value or referenced_names(value):
+                protected[key] = value
+                continue
+            if self.secret_service is None:
+                # Writing the value into the row instead would leave a token in
+                # plain text in the database.
+                raise RuntimeError(
+                    "Cannot store server credentials without a secret service")
+            secret_name = server_secret_name(server_name, kind, key)
+            self.secret_service.set_secret(user_id, secret_name, value)
+            protected[key] = secret_ref(secret_name)
+        return protected
+
+    def _owned_secret_names(self, server: MCPServer) -> list[str]:
+        """Secrets that add_user_server created for this server. A reference
+        the user wrote themselves points at a secret they manage, so it is
+        not included."""
+        names = []
+        for kind, pairs in (('env', server.env), ('header', server.headers)):
+            for key, value in (pairs or {}).items():
+                name = server_secret_name(server.name, kind, key)
+                if value == secret_ref(name):
+                    names.append(name)
+        return names
+
     def update_server(self, server_id: str, **fields) -> bool:
         return self.mcp_server_db.update_server(server_id, **fields)
 
@@ -151,7 +215,13 @@ class MCPServerService:
         return self.mcp_server_db.update_server(server_id, is_enabled=enabled)
 
     def delete_server(self, server_id: str) -> bool:
-        return self.mcp_server_db.delete_server(id=server_id)
+        """Removes the server along with the secrets created for it."""
+        server = self.get_server(server_id)
+        deleted = self.mcp_server_db.delete_server(id=server_id)
+        if deleted and server is not None and self.secret_service is not None:
+            for name in self._owned_secret_names(server):
+                self.secret_service.delete_secret(server.user_id, name)
+        return deleted
 
     async def probe_server(self, server_id: str):
         """Runs the transport-appropriate connection check and records the

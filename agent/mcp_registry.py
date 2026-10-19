@@ -36,6 +36,12 @@ class MCPRegistry:
         owner = self._owners.get(tool_name)
         return bool(owner and owner.is_builtin)
 
+    async def stop_server(self, server_id: str) -> bool:
+        """Shuts down a server that was switched off or removed in settings.
+        Left running, it would keep serving calls - and a running connection
+        is reused as-is, so it would never pick up a changed config."""
+        return await self._client.disconnect(server_id)
+
     def _spec_for(self, server) -> ConnectionSpec:
         # Secrets are decrypted here and go straight into the spec that starts
         # the process. They are never written back to the row, and never put on

@@ -82,19 +82,24 @@ QWidget#chat_row {
     background: transparent;
 }
 
-/* Back out of settings: quiet, it is not the action of the page */
-QPushButton#back_button {
+/* Back out of settings, Cancel, Check: quiet, not the action of the page */
+QPushButton#back_button, QPushButton#secondary_button {
     background-color: #eceef4;
     color: #4a5060;
 }
 
-QPushButton#back_button:hover {
+QPushButton#back_button:hover, QPushButton#secondary_button:hover {
     background-color: #dde0ea;
     color: #1f2430;
 }
 
-QPushButton#back_button:pressed {
+QPushButton#back_button:pressed, QPushButton#secondary_button:pressed {
     background-color: #cdd2e0;
+}
+
+QPushButton#secondary_button:disabled {
+    background-color: #eceef4;
+    color: #a9aeb9;
 }
 
 /* Settings gear: neutral next to the accent-coloured Logout */
@@ -147,6 +152,45 @@ QLineEdit:focus {
     border: 1px solid #3d5afe;
 }
 
+QPlainTextEdit#form_text {
+    border: 1px solid #dcdfe6;
+    border-radius: 8px;
+    padding: 4px;
+    background-color: #ffffff;
+    selection-background-color: #a6b3ff;
+}
+
+QPlainTextEdit#form_text:focus {
+    border: 1px solid #3d5afe;
+}
+
+/* Transparent, or it picks up the grey page background inside white cards.
+   The indicator is drawn here too: once the widget is styled, the platform
+   one can lose its outline and an unselected option becomes invisible. */
+QRadioButton {
+    background: transparent;
+    spacing: 6px;
+}
+
+QRadioButton::indicator {
+    width: 14px;
+    height: 14px;
+    border: 1px solid #c8ccd6;
+    border-radius: 8px;
+    background-color: #ffffff;
+}
+
+QRadioButton::indicator:hover {
+    border-color: #3d5afe;
+}
+
+QRadioButton::indicator:checked {
+    width: 6px;
+    height: 6px;
+    border: 5px solid #3d5afe;
+    border-radius: 8px;
+}
+
 /* --- Panels & Cards --- */
 QFrame#left_panel {
     background-color: #ffffff;
@@ -158,6 +202,69 @@ QFrame#card {
     border: 1px solid #e5e7ec;
     border-radius: 14px;
     padding: 20px;
+}
+
+/* --- Settings: MCP servers --- */
+QWidget#server_list {
+    background: transparent;
+}
+
+QFrame#server_row {
+    background-color: #ffffff;
+    border: 1px solid #e5e7ec;
+    border-radius: 10px;
+}
+
+QFrame#server_form {
+    background-color: #f8f9fc;
+    border: 1px solid #e5e7ec;
+    border-radius: 10px;
+}
+
+QLabel#server_name {
+    font-weight: 600;
+}
+
+/* On/off switch of a server: green while it is on */
+QPushButton#toggle_button {
+    background-color: #eceef4;
+    color: #4a5060;
+}
+
+QPushButton#toggle_button:hover {
+    background-color: #dde0ea;
+}
+
+QPushButton#toggle_button:checked {
+    background-color: #e3f2e5;
+    color: #2e7d32;
+}
+
+QPushButton#toggle_button:checked:hover {
+    background-color: #d0ead4;
+}
+
+QPushButton#toggle_button:disabled {
+    background-color: #eceef4;
+    color: #a9aeb9;
+}
+
+QLabel#server_tag {
+    background-color: #eceef4;
+    color: #4a5060;
+    border-radius: 6px;
+    padding: 1px 6px;
+    font-size: 11px;
+}
+
+QLabel#hint_text {
+    color: #8a8f98;
+    font-size: 12px;
+}
+
+QLabel#error_text {
+    color: #c62828;
+    font-size: 12px;
 }
 
 /* --- Scroll --- */

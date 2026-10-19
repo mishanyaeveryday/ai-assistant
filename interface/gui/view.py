@@ -7,7 +7,7 @@ import shiboken6
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout,
                                QPushButton, QLabel, QLineEdit, QFormLayout, QHBoxLayout, QFrame, QScrollArea,
                                QButtonGroup, QGraphicsDropShadowEffect, QPlainTextEdit, QStackedWidget,
-                               QMessageBox, QInputDialog, QDialog)
+                               QMessageBox, QInputDialog, QDialog, QRadioButton)
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtCore import Qt, Signal
 
@@ -260,6 +260,308 @@ class SettingsPage(QWidget):
     def set_user_data(self, user_data: dict):
         self.username_value.setText(user_data.get('username', '-'))
         self.email_value.setText(user_data.get('email', '-'))
+
+
+def _plain_label(text: str = "") -> QLabel:
+    """Server names, descriptions and errors come from outside the app; plain
+    text mode stops QLabel from reading a traceback's `<...>` as markup."""
+    label = QLabel(text)
+    label.setTextFormat(Qt.TextFormat.PlainText)
+    return label
+
+
+class MCPServersSection(QFrame):
+    """Settings section listing the user's MCP servers. Adding one happens in
+    an inline form rather than a dialog, like the rest of the settings page."""
+
+    add_requested = Signal(dict)
+    delete_requested = Signal(str)
+    enabled_changed = Signal(str, bool)
+    check_requested = Signal(str)
+    # Shown again - the controller re-reads the list so statuses are current.
+    opened = Signal()
+
+    _STATUS_COLORS = {
+        'ok': '#2e7d32',
+        'error': '#c62828',
+        'checking': '#3d5afe',
+        'off': '#8a8f98',
+        'unchecked': '#8a8f98',
+    }
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("card")
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+
+        header = QHBoxLayout()
+        heading = QLabel("MCP servers")
+        heading.setObjectName("section_label")
+        self.add_button = QPushButton("+ Add server")
+        self.add_button.clicked.connect(self.open_form)
+        header.addWidget(heading)
+        header.addStretch(1)
+        header.addWidget(self.add_button)
+        layout.addLayout(header)
+
+        self.form = self._build_form()
+        self.form.hide()
+        layout.addWidget(self.form)
+
+        self.rows_container = QWidget()
+        self.rows_container.setObjectName("server_list")
+        self.rows_layout = QVBoxLayout(self.rows_container)
+        self.rows_layout.setContentsMargins(0, 0, 0, 0)
+        self.rows_layout.setSpacing(8)
+        layout.addWidget(self.rows_container)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.opened.emit()
+
+    def _build_form(self) -> QFrame:
+        form = QFrame()
+        form.setObjectName("server_form")
+        form_outer = QVBoxLayout(form)
+        form_outer.setContentsMargins(14, 12, 14, 12)
+        form_outer.setSpacing(8)
+
+        self.form_layout = QFormLayout()
+
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText("github")
+
+        transport_row = QWidget()
+        transport_row.setObjectName("server_list")
+        transport_layout = QHBoxLayout(transport_row)
+        transport_layout.setContentsMargins(0, 0, 0, 0)
+        self.stdio_radio = QRadioButton("Local command (stdio)")
+        self.http_radio = QRadioButton("URL (http)")
+        self.stdio_radio.setChecked(True)
+        self.transport_group = QButtonGroup(form)
+        self.transport_group.addButton(self.stdio_radio)
+        self.transport_group.addButton(self.http_radio)
+        self.stdio_radio.toggled.connect(self._update_transport_rows)
+        transport_layout.addWidget(self.stdio_radio)
+        transport_layout.addWidget(self.http_radio)
+        transport_layout.addStretch(1)
+
+        self.command_input = QLineEdit()
+        self.command_input.setPlaceholderText(
+            "npx -y @modelcontextprotocol/server-github")
+
+        self.env_input = QPlainTextEdit()
+        self.env_input.setObjectName("form_text")
+        self.env_input.setPlaceholderText("GITHUB_TOKEN=ghp_...\nOne KEY=value per line")
+        self.env_input.setFixedHeight(64)
+
+        self.url_input = QLineEdit()
+        self.url_input.setPlaceholderText("https://example.com/mcp")
+
+        self.headers_input = QPlainTextEdit()
+        self.headers_input.setObjectName("form_text")
+        self.headers_input.setPlaceholderText(
+            "Authorization: Bearer ...\nOne Name: value per line")
+        self.headers_input.setFixedHeight(64)
+
+        self.description_input = QLineEdit()
+        self.description_input.setPlaceholderText("Optional")
+
+        self.form_layout.addRow("Name:", self.name_input)
+        self.form_layout.addRow("Type:", transport_row)
+        self.form_layout.addRow("Command:", self.command_input)
+        self.form_layout.addRow("Environment:", self.env_input)
+        self.form_layout.addRow("URL:", self.url_input)
+        self.form_layout.addRow("Headers:", self.headers_input)
+        self.form_layout.addRow("Description:", self.description_input)
+        form_outer.addLayout(self.form_layout)
+
+        hint = QLabel("Put tokens in Environment or Headers - those values are "
+                      "stored encrypted. The command is stored as plain text.")
+        hint.setObjectName("hint_text")
+        hint.setWordWrap(True)
+        form_outer.addWidget(hint)
+
+        self.form_error = _plain_label()
+        self.form_error.setObjectName("error_text")
+        self.form_error.setWordWrap(True)
+        self.form_error.hide()
+        form_outer.addWidget(self.form_error)
+
+        buttons = QHBoxLayout()
+        cancel_button = QPushButton("Cancel")
+        cancel_button.setObjectName("secondary_button")
+        cancel_button.clicked.connect(self.close_form)
+        self.submit_button = QPushButton("Add server")
+        self.submit_button.clicked.connect(self._submit_form)
+        buttons.addStretch(1)
+        buttons.addWidget(cancel_button)
+        buttons.addWidget(self.submit_button)
+        form_outer.addLayout(buttons)
+
+        self._update_transport_rows()
+        return form
+
+    def _update_transport_rows(self):
+        is_stdio = self.stdio_radio.isChecked()
+        # An error about the other type's fields no longer applies.
+        self.form_error.hide()
+        self.form_layout.setRowVisible(self.command_input, is_stdio)
+        self.form_layout.setRowVisible(self.env_input, is_stdio)
+        self.form_layout.setRowVisible(self.url_input, not is_stdio)
+        self.form_layout.setRowVisible(self.headers_input, not is_stdio)
+
+    def open_form(self):
+        self.form.show()
+        self.add_button.hide()
+        self.name_input.setFocus()
+
+    def close_form(self):
+        for field in (self.name_input, self.command_input, self.url_input,
+                      self.description_input, self.env_input, self.headers_input):
+            field.clear()
+        self.stdio_radio.setChecked(True)
+        self.form_error.hide()
+        self.form.hide()
+        self.add_button.show()
+
+    def show_form_error(self, text: str):
+        self.form_error.setText(text)
+        self.form_error.show()
+
+    def _submit_form(self):
+        self.form_error.hide()
+        self.add_requested.emit({
+            'name': self.name_input.text(),
+            'transport': 'stdio' if self.stdio_radio.isChecked() else 'http',
+            'command': self.command_input.text(),
+            'env': self.env_input.toPlainText(),
+            'url': self.url_input.text(),
+            'headers': self.headers_input.toPlainText(),
+            'description': self.description_input.text(),
+        })
+
+    def show_servers(self, servers: list[dict]):
+        while self.rows_layout.count():
+            item = self.rows_layout.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+
+        if not servers:
+            empty = QLabel("No servers yet.")
+            empty.setObjectName("placeholder_text")
+            self.rows_layout.addWidget(empty)
+            return
+
+        for server in servers:
+            self.rows_layout.addWidget(self._build_row(server))
+
+    def _build_row(self, server: dict) -> QFrame:
+        server_id = server['id']
+        checking = server['status'] == 'checking'
+
+        row = QFrame()
+        row.setObjectName("server_row")
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(12, 10, 12, 10)
+        row_layout.setSpacing(10)
+
+        info = QVBoxLayout()
+        info.setSpacing(2)
+
+        title_line = QHBoxLayout()
+        title_line.setSpacing(6)
+        name = _plain_label(server['name'])
+        name.setObjectName("server_name")
+        title_line.addWidget(name)
+        tags = [server['transport']] + (['built-in'] if server['is_builtin'] else [])
+        for tag in tags:
+            tag_label = QLabel(tag)
+            tag_label.setObjectName("server_tag")
+            title_line.addWidget(tag_label)
+        title_line.addStretch(1)
+        info.addLayout(title_line)
+
+        if server['detail']:
+            detail = _plain_label(server['detail'])
+            detail.setObjectName("hint_text")
+            detail.setToolTip(server['target'])
+            info.addWidget(detail)
+
+        status = _plain_label(self._status_text(server))
+        status.setWordWrap(True)
+        status.setStyleSheet(
+            f"color: {self._STATUS_COLORS[server['status']]}; font-size: 12px;")
+        if server['status'] == 'error' and server['error']:
+            status.setToolTip(server['error'])
+        info.addWidget(status)
+        row_layout.addLayout(info, 1)
+
+        # While a check runs its result is about to overwrite the row, so the
+        # controls that change the row wait for it.
+        enabled_button = QPushButton("Enabled" if server['is_enabled'] else "Disabled")
+        enabled_button.setObjectName("toggle_button")
+        enabled_button.setCheckable(True)
+        enabled_button.setChecked(server['is_enabled'])
+        enabled_button.setToolTip("Click to turn this server off" if server['is_enabled']
+                                  else "Click to turn this server on")
+        enabled_button.setMinimumWidth(100)
+        enabled_button.setEnabled(not checking)
+        enabled_button.toggled.connect(
+            lambda checked, sid=server_id: self.enabled_changed.emit(sid, checked))
+        row_layout.addWidget(enabled_button)
+
+        check_button = QPushButton("Checking…" if checking else "Check")
+        check_button.setObjectName("secondary_button")
+        check_button.setMinimumWidth(110)
+        check_button.setEnabled(not checking)
+        check_button.clicked.connect(
+            lambda _, sid=server_id: self.check_requested.emit(sid))
+        row_layout.addWidget(check_button)
+
+        if server['is_builtin']:
+            # Keeps the buttons lined up with the rows that have a delete button.
+            row_layout.addSpacing(24)
+        else:
+            delete_button = QPushButton("✕")
+            delete_button.setObjectName("chat_delete_button")
+            delete_button.setToolTip(f'Delete "{server["name"]}"')
+            delete_button.setFixedSize(24, 24)
+            delete_button.setEnabled(not checking)
+            delete_button.clicked.connect(
+                lambda _, sid=server_id, title=server['name']: self.confirm_delete(sid, title))
+            row_layout.addWidget(delete_button)
+
+        return row
+
+    @staticmethod
+    def _status_text(server: dict) -> str:
+        status = server['status']
+        if status == 'checking':
+            return "Checking connection…"
+        if status == 'error':
+            first_line = (server['error'] or "").strip().splitlines()
+            reason = f": {first_line[0]}" if first_line else ""
+            return f"Unavailable ({server['error_code']}){reason}"
+        if status == 'ok':
+            return f"Connected · {server['tools']} tool(s)"
+        if status == 'off':
+            return "Turned off"
+        return "Not checked yet"
+
+    def confirm_delete(self, server_id: str, server_name: str):
+        answer = QMessageBox.question(
+            self,
+            "Delete server",
+            f'Delete the MCP server "{server_name}"?\n\n'
+            "Its stored credentials are deleted too.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.delete_requested.emit(server_id)
 
 
 class ChatPage(QWidget):
