@@ -3,7 +3,7 @@ from core.models import User
 from core.services import AuthService, ChatService, MessageService, AIClientService, MCPServerService, SecretService
 from agent.mcp_registry import MCPRegistry
 
-from interface.gui.view import RegistrationPage, LoginPage, ChatPage, AppWindow
+from interface.gui.view import RegistrationPage, LoginPage, ChatPage, SettingsPage, AppWindow
 from interface.gui.controller import RegistrationController, LoginController, MainWindowController, ViewManager, MessageController, AIClientController
 
 import sys
@@ -79,12 +79,14 @@ async def main():
     main_view = ChatPage()
     registration_view = RegistrationPage()
     login_view = LoginPage()
+    settings_view = SettingsPage()
 
     view_manager = ViewManager(
         app_window=app_window,
         main_view=main_view,
         login_view=login_view,
-        registration_view=registration_view
+        registration_view=registration_view,
+        settings_view=settings_view
     )
 
     # 4. MCP runtime - nothing is started here. A server comes up the first
@@ -122,8 +124,9 @@ async def main():
 
         main_window_controller = MainWindowController(
             user=user, model=chat_model, view=main_view)
-        main_view.set_user_data(
-            {"username": user.username, "email": user.email})
+        user_data = {"username": user.username, "email": user.email}
+        main_view.set_user_data(user_data)
+        settings_view.set_user_data(user_data)
         main_window_controller.update_chat_list_in_view()
         view_manager.show_main_window()
 

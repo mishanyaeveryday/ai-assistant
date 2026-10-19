@@ -1,6 +1,6 @@
 from PySide6.QtCore import Signal, QObject
 from core.models import User
-from interface.gui.view import RegistrationPage, LoginPage, ChatPage, AppWindow
+from interface.gui.view import RegistrationPage, LoginPage, ChatPage, SettingsPage, AppWindow
 from core.services import AuthService, ChatService, MessageService, AIClientService
 from interface.gui.worker import AIWorker
 from interface.gui.mcp_tools_approval import HumanToolApproval
@@ -13,19 +13,24 @@ class ViewManager:
     shows. Login, registration and chat are all pages of that one window, and
     naming a new chat happens in an inline cell, so the app has no popups."""
 
-    def __init__(self, app_window: AppWindow, main_view: ChatPage, login_view: LoginPage, registration_view: RegistrationPage):
+    def __init__(self, app_window: AppWindow, main_view: ChatPage, login_view: LoginPage,
+                 registration_view: RegistrationPage, settings_view: SettingsPage):
         self.app_window = app_window
         self.login_view = login_view
         self.registration_view = registration_view
         self.main_view = main_view
+        self.settings_view = settings_view
 
         self.app_window.add_page(self.login_view)
         self.app_window.add_page(self.registration_view)
         self.app_window.add_page(self.main_view)
+        self.app_window.add_page(self.settings_view)
 
         self.login_view.switch_to_registration.connect(self.show_registration)
         self.registration_view.switch_to_login.connect(self.show_login)
         self.main_view.logout_requested.connect(self.handle_logout)
+        self.main_view.settings_requested.connect(self.show_settings)
+        self.settings_view.close_requested.connect(self.show_main_window)
 
     def show_login(self):
         self.app_window.show_page(self.login_view)
@@ -35,6 +40,9 @@ class ViewManager:
 
     def show_main_window(self):
         self.app_window.show_page(self.main_view)
+
+    def show_settings(self):
+        self.app_window.show_page(self.settings_view)
 
     def handle_logout(self):
         self.app_window.show_page(self.login_view)

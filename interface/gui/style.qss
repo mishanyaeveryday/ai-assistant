@@ -82,6 +82,39 @@ QWidget#chat_row {
     background: transparent;
 }
 
+/* Back out of settings: quiet, it is not the action of the page */
+QPushButton#back_button {
+    background-color: #eceef4;
+    color: #4a5060;
+}
+
+QPushButton#back_button:hover {
+    background-color: #dde0ea;
+    color: #1f2430;
+}
+
+QPushButton#back_button:pressed {
+    background-color: #cdd2e0;
+}
+
+/* Settings gear: neutral next to the accent-coloured Logout */
+QPushButton#settings_button {
+    background-color: #eceef4;
+    color: #4a5060;
+    border-radius: 8px;
+    padding: 0px;
+    font-size: 17px;
+}
+
+QPushButton#settings_button:hover {
+    background-color: #dde0ea;
+    color: #1f2430;
+}
+
+QPushButton#settings_button:pressed {
+    background-color: #cdd2e0;
+}
+
 /* Delete button next to each chat: quiet until hovered */
 QPushButton#chat_delete_button {
     background-color: transparent;

@@ -201,11 +201,73 @@ class AppWindow(QMainWindow):
         self.stack.setCurrentWidget(page)
 
 
+class SettingsPage(QWidget):
+    """Settings is a page of the one window, like login and chat - not a
+    separate window."""
+
+    close_requested = Signal()
+
+    def __init__(self):
+        super().__init__()
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(24, 20, 24, 20)
+        outer_layout.setSpacing(16)
+
+        header = QHBoxLayout()
+        self.back_button = QPushButton("← Back")
+        self.back_button.setObjectName("back_button")
+        self.back_button.setMaximumWidth(110)
+        self.back_button.clicked.connect(self.close_requested.emit)
+
+        title = QLabel("Settings")
+        title.setObjectName("app_title")
+
+        header.addWidget(self.back_button)
+        header.addSpacing(8)
+        header.addWidget(title)
+        header.addStretch(1)
+        outer_layout.addLayout(header)
+
+        # Sections live inside a scroll area so this keeps working as more of
+        # them arrive.
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        sections = QWidget()
+        self.sections_layout = QVBoxLayout(sections)
+        self.sections_layout.setContentsMargins(0, 0, 0, 0)
+        self.sections_layout.setSpacing(16)
+        self.sections_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        scroll_area.setWidget(sections)
+        outer_layout.addWidget(scroll_area, 1)
+
+        account_card = QFrame()
+        account_card.setObjectName("card")
+        account_layout = QFormLayout(account_card)
+        account_heading = QLabel("Account")
+        account_heading.setObjectName("section_label")
+        self.username_value = QLabel("-")
+        self.email_value = QLabel("-")
+        account_layout.addRow(account_heading)
+        account_layout.addRow("Username:", self.username_value)
+        account_layout.addRow("Email:", self.email_value)
+        self.sections_layout.addWidget(account_card)
+
+    def add_section(self, widget: QWidget) -> None:
+        """Hook for the sections still to come (MCP servers, secrets)."""
+        self.sections_layout.addWidget(widget)
+
+    def set_user_data(self, user_data: dict):
+        self.username_value.setText(user_data.get('username', '-'))
+        self.email_value.setText(user_data.get('email', '-'))
+
+
 class ChatPage(QWidget):
     logout_requested = Signal()
     chat_selected = Signal(str)
     chat_delete_requested = Signal(str)
     new_chat_requested = Signal(str)
+    settings_requested = Signal()
     send_input = Signal(str, str)
 
     def __init__(self):
@@ -226,6 +288,13 @@ class ChatPage(QWidget):
         self.new_chat_button.clicked.connect(self.prompt_new_chat)
         self.logout_button = QPushButton("Logout")
         self.logout_button.clicked.connect(self.logout_requested.emit)
+        # U+FE0E asks for the outline glyph; without it macOS renders the gear
+        # as a full-colour emoji, which looks out of place next to Logout.
+        self.settings_button = QPushButton("⚙︎")
+        self.settings_button.setObjectName("settings_button")
+        self.settings_button.setToolTip("Settings")
+        self.settings_button.setFixedSize(36, 36)
+        self.settings_button.clicked.connect(self.settings_requested.emit)
 
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
@@ -243,7 +312,12 @@ class ChatPage(QWidget):
         left_panel_layout.addWidget(chats_label)
         left_panel_layout.addWidget(scroll_area)
         left_panel_layout.addStretch()
-        left_panel_layout.addWidget(self.logout_button)
+
+        bottom_row = QHBoxLayout()
+        bottom_row.setSpacing(8)
+        bottom_row.addWidget(self.logout_button, 1)
+        bottom_row.addWidget(self.settings_button)
+        left_panel_layout.addLayout(bottom_row)
 
         right_panel = QFrame()
         self.right_panel_layout = QVBoxLayout(right_panel)
