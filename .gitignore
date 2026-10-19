@@ -26,3 +26,7 @@ venv/
 .pytest_cache/
 **/.pytest_cache/
 *cache
+
+# macOS
+.DS_Store
+**/.DS_Store
