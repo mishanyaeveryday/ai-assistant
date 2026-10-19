@@ -576,7 +576,9 @@ class RegistrationPage(QWidget):
         self.frame = QFrame()
         self.frame.setObjectName("card")
         apply_card_shadow(self.frame)
-        self.frame.setMaximumWidth(400)
+        # Wide enough for the longest button label ("Create a new account")
+        self.frame.setMinimumWidth(440)
+        self.frame.setMaximumWidth(520)
 
         frame_layout = QVBoxLayout(self.frame)
 
@@ -597,10 +599,10 @@ class RegistrationPage(QWidget):
         form_layout.addRow("Password:", self.password_input)
 
         self.register_button = QPushButton("Sign up")
-        self.register_button.setMaximumSize(150, 40)
+        self.register_button.setMaximumHeight(40)
 
         self.login_button = QPushButton("Back to sign in")
-        self.login_button.setMaximumSize(150, 40)
+        self.login_button.setMaximumHeight(40)
 
         button_layout = QHBoxLayout()
         button_layout.addStretch(1)
@@ -665,7 +667,9 @@ class LoginPage(QWidget):
         self.frame = QFrame()
         self.frame.setObjectName("card")
         apply_card_shadow(self.frame)
-        self.frame.setMaximumWidth(400)
+        # Wide enough for the longest button label ("Create a new account")
+        self.frame.setMinimumWidth(440)
+        self.frame.setMaximumWidth(520)
 
         frame_layout = QVBoxLayout(self.frame)
 
@@ -682,10 +686,10 @@ class LoginPage(QWidget):
         form_layout.addRow("Password:", self.password_input)
 
         self.login_button = QPushButton("Sign in")
-        self.login_button.setMaximumSize(150, 40)
+        self.login_button.setMaximumHeight(40)
 
         self.register_button = QPushButton("Create a new account")
-        self.register_button.setMaximumSize(150, 40)
+        self.register_button.setMaximumHeight(40)
 
         button_layout = QHBoxLayout()
         button_layout.addStretch(1)
