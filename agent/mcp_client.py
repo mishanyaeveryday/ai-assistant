@@ -95,7 +95,14 @@ class _Connection:
     async def start(self):
         self._task = asyncio.create_task(
             self._run(), name=f"mcp-connection-{self.spec.name}")
-        await self._ready.wait()
+        try:
+            await self._ready.wait()
+        except asyncio.CancelledError:
+            # The caller gave up - the user stopped the task mid-start. Left
+            # alone, the connection would finish starting and then wait for a
+            # shutdown nobody is going to ask for: an orphaned server process.
+            self._shutdown.set()
+            raise
         if self.error is not None:
             raise self.error
         if self.session is None:

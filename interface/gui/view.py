@@ -1,4 +1,5 @@
 import asyncio
+import html
 import json
 import re
 from pathlib import Path
@@ -7,16 +8,21 @@ import shiboken6
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout,
                                QPushButton, QLabel, QLineEdit, QFormLayout, QHBoxLayout, QFrame, QScrollArea,
                                QButtonGroup, QGraphicsDropShadowEffect, QPlainTextEdit, QStackedWidget,
-                               QMessageBox, QInputDialog, QDialog, QRadioButton)
+                               QMessageBox, QInputDialog, QDialog, QRadioButton, QSizePolicy)
 from PySide6.QtGui import QColor, QPixmap
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer, QEvent
+
+from interface.gui.markdown_render import markdown_to_html
 
 _IMAGE_MARKER_RE = re.compile(r"\[GENERATED_IMAGE:(.+?)\]")
 _MAX_IMAGE_WIDTH = 420
 _CHAT_TITLE_FIELD_WIDTH = 280
+# Around the chat cells and the message box under them, so their edges line up.
+_CHAT_MARGIN = 8
+_COMPOSER_BUTTON_WIDTH = 76
 _IMAGE_PLACEHOLDER_STYLE = (
     "color: #8a8f98; font-style: italic; background-color: #f1f8e9; "
-    "border-radius: 5px; padding: 5px;"
+    "border-radius: 8px; padding: 8px 10px;"
 )
 
 
@@ -53,6 +59,19 @@ async def _load_image_into_label(path: str, label: QLabel) -> None:
     label.setStyleSheet("")
 
 
+def build_user_bubble(text: str) -> QLabel:
+    # Rich text, so the prompt is escaped and its line breaks kept.
+    escaped = html.escape(text).replace("\n", "<br>")
+    label = QLabel(f"<b>You:</b><br>{escaped}")
+    label.setWordWrap(True)
+    label.setTextInteractionFlags(
+        Qt.TextInteractionFlag.TextSelectableByMouse)
+    label.setStyleSheet(
+        "background-color: #e1f5fe; border-radius: 8px; padding: 8px 10px;")
+    label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+    return label
+
+
 def build_assistant_bubble(text: str) -> QWidget:
     clean_text, image_paths = _split_text_and_images(text)
 
@@ -62,13 +81,20 @@ def build_assistant_bubble(text: str) -> QWidget:
     layout.setSpacing(6)
 
     if clean_text:
-        label = QLabel(f"<b>Assistant:</b><br>{clean_text}")
+        label = QLabel()
         label.setWordWrap(True)
+        label.setTextFormat(Qt.TextFormat.RichText)
         label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse)
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.LinksAccessibleByMouse)
+        label.setOpenExternalLinks(True)
         label.setStyleSheet(
-            "background-color: #f1f8e9; border-radius: 5px; padding: 5px;")
+            "background-color: #f1f8e9; border-radius: 8px; padding: 8px 10px;")
         label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        # The model writes Markdown. Rendered with the label's font, which the
+        # stylesheet only sets once the label is polished.
+        label.ensurePolished()
+        label.setText(markdown_to_html(clean_text, label.font(), title="Assistant:"))
         layout.addWidget(label)
 
     for path in image_paths:
@@ -86,89 +112,197 @@ def build_assistant_bubble(text: str) -> QWidget:
 
 class ApprovalBubble(QWidget):
     """Inline chat cell asking the user to allow/deny a sensitive tool call,
-    used instead of a blocking popup dialog."""
+    used instead of a blocking popup dialog. Once answered it folds into a
+    single line, so a task that asked many times still leaves a readable chat.
+    Its look lives in style.qss: a style set on the card itself would be
+    inherited by every label inside it."""
 
     decided = Signal(bool)
 
-    _MIN_DETAILS_LINES = 1
+    # outcome -> (status text, objectName that colours it)
+    _OUTCOMES = {
+        'approved': ("✓ Allowed", "approval_allowed"),
+        'denied': ("✕ Denied", "approval_denied"),
+        'stopped': ("Stopped", "approval_stopped"),
+    }
     _MAX_DETAILS_LINES = 8
-    _LINE_HEIGHT_PX = 17
-    _DETAILS_PADDING_PX = 16
+    _SUMMARY_CHARS = 80
 
     def __init__(self, tool_name: str, args: dict, parent=None):
         super().__init__(parent)
+        self.is_decided = False
+        # As the last cell of a short chat it would be handed the spare height.
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
 
-        card = QFrame()
-        card.setStyleSheet(
-            "background-color: #fff8e1; border: 1px solid #f0d98c; border-radius: 8px;")
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(10, 10, 10, 10)
+        self._card = QFrame()
+        self._card.setObjectName("approval_card")
+        self._card.setProperty("decided", False)
+        card_layout = QVBoxLayout(self._card)
+        # Lines its text up with the messages', which sit a few pixels
+        # inside their own padding.
+        card_layout.setContentsMargins(12, 8, 12, 8)
         card_layout.setSpacing(8)
 
-        title = QLabel(f"<b>Approval needed:</b> run <code>{tool_name}</code>")
-        title.setWordWrap(True)
-        card_layout.addWidget(title)
+        header = QHBoxLayout()
+        header.setSpacing(8)
+        self._title = QLabel(
+            f'Allow <span style="font-family: Menlo, Consolas, monospace; font-weight: 600;">'
+            f'{html.escape(tool_name)}</span> to run?')
+        self._title.setTextFormat(Qt.TextFormat.RichText)
+        # Shown instead of the title once answered: what ran, on one line.
+        self._summary = QLabel(" ".join(filter(None, [tool_name, self._summarize(args)])))
+        self._summary.setObjectName("approval_summary")
+        self._summary.setTextFormat(Qt.TextFormat.PlainText)
+        # Clipped rather than widening the chat when the command is long.
+        self._summary.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._summary.setToolTip(self._format_args(args))
+        self._summary.hide()
+        self._status = QLabel()
+        self._status.hide()
+        header.addWidget(self._title, 1)
+        header.addWidget(self._summary, 1)
+        header.addWidget(self._status)
+        card_layout.addLayout(header)
 
         details_text = self._format_args(args)
-        details = QPlainTextEdit(details_text)
-        details.setReadOnly(True)
-        details.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        details.setFixedHeight(self._details_height(details_text))
-        details.setStyleSheet(
-            "font-family: Menlo, Consolas, monospace; font-size: 12px; "
-            "background-color: #fffdf5; border: 1px solid #e7d9a0; border-radius: 4px; padding: 4px;")
-        card_layout.addWidget(details)
+        self._details = QPlainTextEdit(details_text)
+        self._details.setObjectName("approval_details")
+        self._details.setReadOnly(True)
+        self._details.setFixedHeight(self._details_height(details_text))
+        card_layout.addWidget(self._details)
 
-        self._status_label = QLabel("")
-        self._status_label.hide()
-        card_layout.addWidget(self._status_label)
+        self._buttons = QWidget()
+        self._buttons.setObjectName("approval_buttons")
+        button_row = QHBoxLayout(self._buttons)
+        button_row.setContentsMargins(0, 0, 0, 0)
+        deny_button = QPushButton("Deny")
+        deny_button.setObjectName("secondary_button")
+        approve_button = QPushButton("Allow")
+        button_row.addStretch(1)
+        button_row.addWidget(deny_button)
+        button_row.addWidget(approve_button)
+        card_layout.addWidget(self._buttons)
 
-        self._button_row = QHBoxLayout()
-        self._deny_button = QPushButton("Deny")
-        self._approve_button = QPushButton("Approve")
-        self._deny_button.setStyleSheet(
-            "background-color: #e53935;")
-        self._approve_button.setStyleSheet(
-            "background-color: #43a047;")
-        self._button_row.addStretch(1)
-        self._button_row.addWidget(self._deny_button)
-        self._button_row.addWidget(self._approve_button)
-        card_layout.addLayout(self._button_row)
+        approve_button.clicked.connect(lambda: self._resolve(True))
+        deny_button.clicked.connect(lambda: self._resolve(False))
 
-        self._approve_button.clicked.connect(lambda: self._resolve(True))
-        self._deny_button.clicked.connect(lambda: self._resolve(False))
+        outer.addWidget(self._card)
 
-        outer.addWidget(card)
-
-    @classmethod
-    def _details_height(cls, text: str) -> int:
-        line_count = text.count("\n") + 1
-        clamped = min(max(line_count, cls._MIN_DETAILS_LINES),
-                      cls._MAX_DETAILS_LINES)
-        return clamped * cls._LINE_HEIGHT_PX + cls._DETAILS_PADDING_PX
+    def _details_height(self, text: str) -> int:
+        lines = min(text.count("\n") + 1, self._MAX_DETAILS_LINES)
+        return lines * self._details.fontMetrics().lineSpacing() + 18
 
     @staticmethod
-    def _format_args(args: dict) -> str:
+    def _value_text(value) -> str:
+        return value if isinstance(value, str) else json.dumps(
+            value, ensure_ascii=False, default=str)
+
+    @classmethod
+    def _format_args(cls, args: dict) -> str:
         if not args:
             return "(no arguments)"
-        try:
-            return json.dumps(args, ensure_ascii=False, indent=2)
-        except (TypeError, ValueError):
-            return str(args)
+        lines = []
+        for key, value in args.items():
+            text = cls._value_text(value)
+            if "\n" in text:
+                lines.append(f"{key}:")
+                lines.extend(f"  {line}" for line in text.splitlines())
+            else:
+                lines.append(f"{key}: {text}")
+        return "\n".join(lines)
+
+    @classmethod
+    def _summarize(cls, args: dict) -> str:
+        """The first argument on one line - usually what the call is about,
+        e.g. the command or the path."""
+        if not args:
+            return ""
+        text = " ".join(cls._value_text(next(iter(args.values()))).split())
+        if len(text) > cls._SUMMARY_CHARS:
+            text = text[:cls._SUMMARY_CHARS - 1] + "…"
+        return text
 
     def _resolve(self, approved: bool):
-        self._approve_button.setEnabled(False)
-        self._deny_button.setEnabled(False)
-        self._approve_button.hide()
-        self._deny_button.hide()
-        self._status_label.setStyleSheet(
-            f"font-weight: 600; color: {'#2e7d32' if approved else '#c62828'};")
-        self._status_label.setText("Approved" if approved else "Denied")
-        self._status_label.show()
+        if self.is_decided:
+            return
+        self.show_outcome('approved' if approved else 'denied')
         self.decided.emit(approved)
+
+    def mark_stopped(self):
+        """The task was stopped while this was still waiting for an answer."""
+        if not self.is_decided:
+            self.show_outcome('stopped')
+
+    def show_outcome(self, outcome: str):
+        """Folds the card into its answered form, without asking again."""
+        self.is_decided = True
+        text, name = self._OUTCOMES[outcome]
+        self._status.setText(text)
+        self._status.setObjectName(name)
+        self._title.hide()
+        self._details.hide()
+        self._buttons.hide()
+        self._summary.show()
+        self._status.show()
+        self._card.setProperty("decided", True)
+        # A changed property or objectName only restyles once re-polished.
+        for widget in (self._card, self._status):
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
+
+
+class PromptInput(QPlainTextEdit):
+    """The message box: grows with its text up to a few lines. Enter sends,
+    Shift+Enter starts a new line."""
+
+    submitted = Signal()
+
+    _MAX_VISIBLE_LINES = 6
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("prompt_input")
+        self.setPlaceholderText("Ask anything")
+        self.setTabChangesFocus(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # The stylesheet's font, border and padding are only applied when the
+        # widget is polished; measured before that, every height is off.
+        self.ensurePolished()
+        self.document().documentLayout().documentSizeChanged.connect(self._fit_height)
+        self._fit_height()
+
+    def keyPressEvent(self, event):
+        if (event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                and not event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
+            self.submitted.emit()
+            return
+        super().keyPressEvent(event)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
+            self._fit_height()
+
+    def height_for_lines(self, lines: int) -> int:
+        margins = self.contentsMargins()          # the stylesheet's border + padding
+        # The few extra pixels are what a line takes beyond its spacing; a
+        # height without them scrolls by one line.
+        return int(lines * self.fontMetrics().lineSpacing()
+                   + 2 * self.document().documentMargin() + 4
+                   + margins.top() + margins.bottom())
+
+    def _fit_height(self, *_):
+        # The plain-text layout measures the document in lines, wrapped ones
+        # included.
+        lines = int(self.document().documentLayout().documentSize().height())
+        overflowing = lines > self._MAX_VISIBLE_LINES
+        self.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded if overflowing
+            else Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setFixedHeight(self.height_for_lines(min(max(lines, 1), self._MAX_VISIBLE_LINES)))
 
 
 def apply_card_shadow(widget):
@@ -571,6 +705,10 @@ class ChatPage(QWidget):
     new_chat_requested = Signal(str)
     settings_requested = Signal()
     send_input = Signal(str, str)
+    stop_requested = Signal()
+    # A chat was (re)built from history; whatever a running task holds that
+    # history doesn't - its approval cards - has to be added back.
+    chat_shown = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -632,12 +770,26 @@ class ChatPage(QWidget):
         main_layout.addWidget(right_panel)
 
         self.chat_buttons = {}
+        self.chat_busy_dots = {}
         self.chats_button_group = None
         self.messages_layout = None
         self.chat_scroll_area = None
         self.message_input = None
         self.send_button = None
+        self.stop_button = None
+        self.busy_hint_label = None
+        self.thinking_label = None
         self.current_chat_id = None
+
+        # Kept here rather than on the chat's widgets, which are rebuilt
+        # whenever another chat is opened while the task keeps running.
+        self._busy_chat_id = None
+        # The open chat's approval cards, to tell whether one still waits.
+        self._approval_bubbles = []
+        self._thinking_dots = 0
+        self._thinking_timer = QTimer(self)
+        self._thinking_timer.setInterval(450)
+        self._thinking_timer.timeout.connect(self._tick_thinking)
 
     def set_user_data(self, user_data: dict):
         self.welcome_label.setText(f"Welcome, {user_data['username']}!")
@@ -649,12 +801,20 @@ class ChatPage(QWidget):
         for i in reversed(range(self.right_panel_layout.count())):
             item = self.right_panel_layout.takeAt(i)
             if item.widget():
+                # Hidden first: until deleteLater gets to it, it would still
+                # paint under the chat that replaces it.
+                item.widget().hide()
                 item.widget().deleteLater()
 
+        self._thinking_timer.stop()
         self.messages_layout = None
         self.chat_scroll_area = None
         self.message_input = None
         self.send_button = None
+        self.stop_button = None
+        self.busy_hint_label = None
+        self.thinking_label = None
+        self._approval_bubbles = []
 
     def clear_chat_view(self):
         """Returns the right panel to its "nothing selected" state, used when
@@ -673,90 +833,184 @@ class ChatPage(QWidget):
 
         chat_container = QWidget()
         self.messages_layout = QVBoxLayout(chat_container)
-        self.messages_layout.setContentsMargins(5, 5, 5, 5)
+        self.messages_layout.setContentsMargins(_CHAT_MARGIN, _CHAT_MARGIN, _CHAT_MARGIN, _CHAT_MARGIN)
         self.messages_layout.setSpacing(10)
         self.messages_layout.setAlignment(
             Qt.AlignmentFlag.AlignTop)
         for m in message_data:
-            user_message = QLabel(f"<b>You:</b><br>{m['input']}")
-            user_message.setWordWrap(True)
-            user_message.setTextInteractionFlags(
-                Qt.TextInteractionFlag.TextSelectableByMouse)
-            user_message.setStyleSheet(
-                "background-color: #e1f5fe; border-radius: 5px; padding: 5px;")
-            user_message.setAlignment(Qt.AlignmentFlag.AlignLeft)
-
-            assistant_bubble = build_assistant_bubble(m['output'])
-
-            self.messages_layout.addWidget(user_message)
-            self.messages_layout.addWidget(assistant_bubble)
+            self.messages_layout.addWidget(build_user_bubble(m['input']))
+            # A prompt that is still being worked on has no answer yet.
+            if m['output'] is not None:
+                self.messages_layout.addWidget(build_assistant_bubble(m['output']))
 
         self.chat_scroll_area = QScrollArea()
         self.chat_scroll_area.setWidgetResizable(True)
         self.chat_scroll_area.setWidget(chat_container)
         self.chat_scroll_area.setStyleSheet("border: none;")
 
-        self.message_input = QLineEdit()
-        self.message_input.setPlaceholderText("Start typing a prompt")
-        self.send_button = QPushButton("Run")
+        self.message_input = PromptInput()
+        self.message_input.submitted.connect(self.send_prompt)
+        self.message_input.textChanged.connect(self._apply_task_state)
+        self.send_button = QPushButton("Send")
+        self.send_button.setToolTip("Send (Enter)")
+        self.send_button.clicked.connect(self.send_prompt)
+        self.stop_button = QPushButton("Stop")
+        self.stop_button.setObjectName("stop_button")
+        self.stop_button.clicked.connect(self.stop_requested.emit)
+        # Level with a one-line message box, and the same width as each
+        # other, so swapping one for the other doesn't move anything.
+        for button in (self.send_button, self.stop_button):
+            button.setFixedSize(_COMPOSER_BUTTON_WIDTH, self.message_input.height_for_lines(1))
+        # The macOS style gives buttons and text boxes invisible margins that
+        # layouts line up instead of the drawn edges - here that put Send
+        # 8px below the box. Line up what is drawn.
+        for widget in (self.message_input, self.send_button, self.stop_button):
+            widget.setAttribute(Qt.WidgetAttribute.WA_LayoutUsesWidgetRect)
+
+        self.busy_hint_label = QLabel()
+        self.busy_hint_label.setObjectName("hint_text")
+        self.busy_hint_label.hide()
 
         # The input row lives in its own widget rather than a bare sub-layout:
         # the panel is torn down widget by widget, and a plain layout would be
         # skipped there, leaving the old input box painted over the panel.
         bottom_row = QWidget()
-        bottom_layout = QHBoxLayout(bottom_row)
-        bottom_layout.setContentsMargins(0, 0, 0, 0)
-        bottom_layout.addWidget(self.message_input)
-        bottom_layout.addWidget(self.send_button)
+        # Only as tall as it needs; the chat above takes the rest.
+        bottom_row.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        bottom_layout = QVBoxLayout(bottom_row)
+        # Lined up with the chat cells above, which sit inside the same margin.
+        bottom_layout.setContentsMargins(_CHAT_MARGIN, 0, _CHAT_MARGIN, _CHAT_MARGIN)
+        bottom_layout.setSpacing(4)
+        bottom_layout.addWidget(self.busy_hint_label)
+        input_row = QHBoxLayout()
+        input_row.setSpacing(8)
+        input_row.addWidget(self.message_input, 1)
+        # At the bottom, so a message box grown to several lines keeps its
+        # button on its last line.
+        input_row.addWidget(self.send_button, 0, Qt.AlignmentFlag.AlignBottom)
+        input_row.addWidget(self.stop_button, 0, Qt.AlignmentFlag.AlignBottom)
+        bottom_layout.addLayout(input_row)
 
-        self.send_button.clicked.connect(self.send_prompt)
-        self.message_input.returnPressed.connect(self.send_prompt)
-
-        self.right_panel_layout.addWidget(self.chat_scroll_area)
+        self.right_panel_layout.addWidget(self.chat_scroll_area, 1)
         self.right_panel_layout.addWidget(bottom_row)
 
+        if self._busy_chat_id == chat_id:
+            self._show_thinking()
+        self._apply_task_state()
         self.scroll_to_bottom()
+        self.message_input.setFocus()
+        self.chat_shown.emit(chat_id)
 
-    def set_input_enabled(self, enabled: bool):
+    def set_busy_chat(self, chat_id: str | None):
+        """Which chat has a task running, if any. Only one runs at a time, so
+        sending is locked in every chat while it does; its own chat shows
+        Stop and a thinking line instead."""
+        self._busy_chat_id = chat_id
+        for cid, dot in self.chat_busy_dots.items():
+            dot.setVisible(cid == chat_id)
+        if chat_id is not None and chat_id == self.current_chat_id:
+            self._show_thinking()
+        else:
+            self._hide_thinking()
+        self._apply_task_state()
+
+    def _apply_task_state(self):
         # The chat can be closed (deleted) while a request is still in flight,
         # in which case these widgets no longer exist.
         if self.send_button is None or not shiboken6.isValid(self.send_button):
             return
-        self.send_button.setEnabled(enabled)
-        self.message_input.setEnabled(enabled)
+        busy_here = self._busy_chat_id is not None and self._busy_chat_id == self.current_chat_id
+        busy_elsewhere = self._busy_chat_id is not None and not busy_here
+
+        self.send_button.setVisible(not busy_here)
+        self.stop_button.setVisible(busy_here)
+        has_text = bool(self.message_input.toPlainText().strip())
+        self.send_button.setEnabled(has_text and self._busy_chat_id is None)
+
+        if busy_elsewhere:
+            busy_button = self.chat_buttons.get(self._busy_chat_id)
+            name = f'"{busy_button.text()}"' if busy_button is not None else "Another chat"
+            self.busy_hint_label.setText(
+                f"{name} is still working - wait for it, or open it to stop it.")
+        self.busy_hint_label.setVisible(busy_elsewhere)
 
     def send_prompt(self):
-        if self.message_input is None:
+        if self.message_input is None or self.current_chat_id is None:
             return
-        prompt_text = self.message_input.text().strip()
+        # One task at a time: Enter does nothing while one is running.
+        if self._busy_chat_id is not None:
+            return
+        prompt_text = self.message_input.toPlainText().strip()
+        if not prompt_text:
+            return
 
-        if prompt_text and self.current_chat_id:
-            user_message = QLabel(f"<b>You:</b><br>{prompt_text}")
-            user_message.setWordWrap(True)
-            user_message.setTextInteractionFlags(
-                Qt.TextInteractionFlag.TextSelectableByMouse)
-            user_message.setStyleSheet(
-                "background-color: #e1f5fe; border-radius: 5px; padding: 5px;")
-            user_message.setAlignment(Qt.AlignmentFlag.AlignLeft)
-            self.messages_layout.addWidget(user_message)
-            self.scroll_to_bottom()
+        self.add_user_message(prompt_text)
+        self.message_input.clear()
+        self.send_input.emit(self.current_chat_id, prompt_text)
 
-            self.send_input.emit(self.current_chat_id, prompt_text)
+    def _append(self, widget: QWidget):
+        """Adds a cell to the open chat, above the thinking line if shown."""
+        index = (self.messages_layout.indexOf(self.thinking_label)
+                 if self.thinking_label is not None else -1)
+        if index >= 0:
+            self.messages_layout.insertWidget(index, widget)
+        else:
+            self.messages_layout.addWidget(widget)
+        self.scroll_to_bottom()
 
-            self.message_input.clear()
+    def add_user_message(self, text: str):
+        if self.messages_layout is not None:
+            self._append(build_user_bubble(text))
 
     def add_assistant_message(self, text: str):
         if self.messages_layout is not None:
-            assistant_bubble = build_assistant_bubble(text)
-            self.messages_layout.addWidget(assistant_bubble)
-            self.scroll_to_bottom()
+            self._append(build_assistant_bubble(text))
 
-    def add_approval_request(self, tool_name: str, args: dict) -> ApprovalBubble:
+    def add_approval_request(self, tool_name: str, args: dict,
+                             outcome: str | None = None) -> ApprovalBubble:
+        """A card asking to allow a tool call - or, with `outcome`, one that
+        was already answered, when an open task's chat is shown again."""
         bubble = ApprovalBubble(tool_name, args)
+        if outcome is not None:
+            bubble.show_outcome(outcome)
+        else:
+            bubble.decided.connect(lambda _: self._update_thinking_text())
+        self._approval_bubbles.append(bubble)
         if self.messages_layout is not None:
-            self.messages_layout.addWidget(bubble)
-            self.scroll_to_bottom()
+            self._append(bubble)
+        self._update_thinking_text()
         return bubble
+
+    def _show_thinking(self):
+        if self.messages_layout is None or self.thinking_label is not None:
+            return
+        self.thinking_label = QLabel()
+        self.thinking_label.setObjectName("thinking_text")
+        self.messages_layout.addWidget(self.thinking_label)
+        self._thinking_dots = 0
+        self._update_thinking_text()
+        self._thinking_timer.start()
+        self.scroll_to_bottom()
+
+    def _hide_thinking(self):
+        self._thinking_timer.stop()
+        label, self.thinking_label = self.thinking_label, None
+        if label is not None and shiboken6.isValid(label):
+            label.hide()
+            self.messages_layout.removeWidget(label)
+            label.deleteLater()
+
+    def _tick_thinking(self):
+        self._thinking_dots = (self._thinking_dots + 1) % 4
+        self._update_thinking_text()
+
+    def _update_thinking_text(self):
+        if self.thinking_label is None or not shiboken6.isValid(self.thinking_label):
+            return
+        waiting = any(shiboken6.isValid(b) and not b.is_decided
+                      for b in self._approval_bubbles)
+        text = "Waiting for your approval" if waiting else "Thinking"
+        self.thinking_label.setText(text + "." * self._thinking_dots)
 
     def update_chats_list(self, chats_data: list[dict]):
         while self.chats_layout.count():
@@ -765,6 +1019,7 @@ class ChatPage(QWidget):
             if widget is not None:
                 widget.deleteLater()
         self.chat_buttons.clear()
+        self.chat_busy_dots.clear()
         self.chats_button_group = QButtonGroup(self)
         self.chats_button_group.setExclusive(True)
 
@@ -799,11 +1054,18 @@ class ChatPage(QWidget):
             delete_button.clicked.connect(
                 lambda _, cid=chat_id, title=chat_title: self.confirm_delete_chat(cid, title))
 
+            busy_dot = QLabel("●")
+            busy_dot.setObjectName("chat_busy_dot")
+            busy_dot.setToolTip("Working on a task")
+            busy_dot.setVisible(chat_id == self._busy_chat_id)
+
             row_layout.addWidget(button, 1)
+            row_layout.addWidget(busy_dot)
             row_layout.addWidget(delete_button)
 
             self.chats_layout.addWidget(row)
             self.chat_buttons[chat_id] = button
+            self.chat_busy_dots[chat_id] = busy_dot
 
         # The button group is rebuilt from scratch, so the chat that is open
         # on the right has to be re-marked as the selected one.
@@ -859,9 +1121,17 @@ class ChatPage(QWidget):
             self.chat_delete_requested.emit(chat_id)
 
     def scroll_to_bottom(self):
-        if self.chat_scroll_area:
-            self.chat_scroll_area.verticalScrollBar().setValue(
-                self.chat_scroll_area.verticalScrollBar().maximum())
+        area = self.chat_scroll_area
+        if area is None:
+            return
+
+        def scroll():
+            if shiboken6.isValid(area):
+                area.verticalScrollBar().setValue(area.verticalScrollBar().maximum())
+
+        # A cell added just now is laid out on the next pass of the event
+        # loop; scrolling right away would stop one cell short of it.
+        QTimer.singleShot(0, scroll)
 
 
 class RegistrationPage(QWidget):

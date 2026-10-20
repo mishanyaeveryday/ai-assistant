@@ -2,7 +2,7 @@ from PySide6.QtCore import Signal, QObject
 from core.models import User, MCPServer
 from interface.gui.view import RegistrationPage, LoginPage, ChatPage, SettingsPage, AppWindow, MCPServersSection
 from core.services import AuthService, ChatService, MessageService, AIClientService, MCPServerService
-from interface.gui.worker import AIWorker
+from interface.gui.worker import AIWorker, STOPPED_OUTPUT
 from interface.gui.mcp_tools_approval import HumanToolApproval
 from agent.tools_policy import ToolsApprovalPolicy
 import asyncio
@@ -53,6 +53,10 @@ class ViewManager:
         self.app_window.show_page(self.settings_view)
 
     def handle_logout(self):
+        # The chat page outlives the login: the chat open on it would still be
+        # showing when the next user logs in. Their login refills the chat
+        # list, but nothing reopens the right-hand side.
+        self.main_view.clear_chat_view()
         self.app_window.show_page(self.login_view)
 
 
@@ -170,53 +174,108 @@ class MessageController(QObject):
 
 
 class AIClientController(QObject):
+    """Runs one prompt at a time. The task belongs to the chat it was sent
+    from and keeps running while other chats are opened: its answer goes to
+    that chat only, and its approval cards come back when it is reopened."""
+
     def __init__(self, model: AIClientService, view: ChatPage, mcp_registry):
         super().__init__()
         self._model = model
         self._view = view
         self._mcp_registry = mcp_registry
-        self._tool_approval = HumanToolApproval(parent_widget=self._view)
+        self._tool_approval = HumanToolApproval(view=self._view)
         self._approval_policy = ToolsApprovalPolicy()
+        # Kept so the task can be stopped; asyncio itself only holds a weak
+        # reference to it.
+        self._task: asyncio.Task | None = None
+        self._task_chat_id: str | None = None
         self._view.send_input.connect(self.handle_prompt)
+        self._view.stop_requested.connect(self.stop)
+        self._view.chat_shown.connect(self.handle_chat_shown)
+        self._view.chat_delete_requested.connect(self.handle_chat_deleted)
+        # A task left running would keep acting after logout - and against the
+        # next user's servers and secrets once they log in.
+        self._view.logout_requested.connect(self.stop)
+
+    @property
+    def is_running(self) -> bool:
+        return self._task is not None and not self._task.done()
 
     def handle_prompt(self, chat_id, user_input):
-        self._view.set_input_enabled(False)
+        if self.is_running:
+            return
+        self._task_chat_id = chat_id
+        self._view.set_busy_chat(chat_id)
 
         self.worker = AIWorker(
             self._model,
             chat_id,
             user_input,
             mcp_registry=self._mcp_registry,
-            approve_tool=self._tool_approval.approve,
+            approve_tool=self._tool_approval.for_chat(chat_id),
             tools_approval_policy=self._approval_policy,
         )
 
-        self.worker.finished.connect(self.handle_ai_response)
-
-        self.worker.error.connect(self.handle_ai_error)
+        self.worker.finished.connect(
+            lambda response, cid=chat_id: self.handle_ai_response(cid, response))
+        self.worker.error.connect(
+            lambda message, cid=chat_id: self.handle_ai_error(cid, message))
+        self.worker.stopped.connect(
+            lambda cid=chat_id: self.handle_stopped(cid))
 
         self.worker.finished.connect(self.worker.deleteLater)
-        asyncio.create_task(self.worker.run())
+        self.worker.error.connect(self.worker.deleteLater)
+        self.worker.stopped.connect(self.worker.deleteLater)
+        self._task = asyncio.create_task(self.worker.run())
 
-    def handle_ai_response(self, response_dict):
-        self._view.set_input_enabled(True)
+    def stop(self):
+        """Stops the running task right where it is - waiting for the model,
+        for an approval, or in the middle of a tool call."""
+        if not self.is_running or self._task.cancelling():
+            return
+        self._task.cancel()
+
+    def handle_chat_shown(self, chat_id):
+        if chat_id == self._task_chat_id:
+            self._tool_approval.show_chat(chat_id)
+
+    def handle_chat_deleted(self, chat_id):
+        if chat_id == self._task_chat_id:
+            self.stop()
+
+    def _finish(self):
+        self._task = None
+        self._task_chat_id = None
+        self._tool_approval.clear()
+        self._view.set_busy_chat(None)
+
+    def _reply_in(self, chat_id, text):
+        # The user may have opened another chat meanwhile; the answer is
+        # saved with its own chat and shows up when that one is opened.
+        if self._view.current_chat_id == chat_id:
+            self._view.add_assistant_message(text)
+
+    def handle_ai_response(self, chat_id, response_dict):
+        self._finish()
 
         try:
 
             if response_dict and 'output' in response_dict:
                 assistant_output = response_dict['output']
-                self._view.add_assistant_message(assistant_output)
+                self._reply_in(chat_id, assistant_output)
             else:
-                self._view.add_assistant_message(
-                    "Sorry, I received an invalid response.")
+                self._reply_in(chat_id, "Sorry, I received an invalid response.")
         except Exception as e:
-            self.handle_ai_error(f"Error processing response: {e}")
+            self.handle_ai_error(chat_id, f"Error processing response: {e}")
 
-    def handle_ai_error(self, error_message):
-        self._view.set_input_enabled(True)
+    def handle_ai_error(self, chat_id, error_message):
+        self._finish()
 
-        self._view.add_assistant_message(
-            f"Sorry, an error occurred: {error_message}")
+        self._reply_in(chat_id, f"Sorry, an error occurred: {error_message}")
+
+    def handle_stopped(self, chat_id):
+        self._finish()
+        self._reply_in(chat_id, STOPPED_OUTPUT)
 
 
 def _parse_pairs(text: str, separator: str, key_re: re.Pattern, what: str) -> dict:
