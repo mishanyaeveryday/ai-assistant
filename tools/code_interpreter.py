@@ -6,11 +6,15 @@ import tempfile
 from pathlib import Path
 import docker
 # from langchain_google_genai.chat_models import ChatGoogleGenerativeAI
-from config.settings import GENAI_MODEL, DOCKER_CONTAINER
+from config.settings import DOCKER_CONTAINER
 from typing import Optional
 from pydantic import Field, BaseModel
 from typing import Type
 from langchain_google_genai import ChatGoogleGenerativeAI
+
+# This LangChain tool predates the MCP servers and the app no longer uses it,
+# so it keeps the Gemini model it was written for.
+GENAI_MODEL = "gemini-2.5-flash"
 
 CODE_GENERATION_SYSTEM_PROMPT = """
 You are an intelligent AI agent designed to generate accurate python3 code and you SHOULD to use tool generate_code

@@ -15,9 +15,23 @@ GROQ_API_KEY = os.getenv('GROQ_API_KEY')
 
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
-GENAI_API_KEY = os.getenv('GENAI_API_KEY')
+OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
 
-GENAI_MODEL = "gemini-2.5-flash"
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+# Any model id from https://openrouter.ai/models that supports tools.
+LLM_MODEL = os.getenv('LLM_MODEL', "google/gemini-3.8-flash")
+
+# Models OpenRouter switches to, in order, when LLM_MODEL fails - e.g.
+# LLM_FALLBACK_MODELS=google/gemini-3.7-flash,openai/gpt-5-mini. Off by
+# default: a fallback that answers mid-task is sent the first model's
+# reasoning, which some models reject. A 503 from one provider is already
+# retried by OpenRouter on another provider of the same model.
+LLM_FALLBACK_MODELS = [m.strip() for m in os.getenv('LLM_FALLBACK_MODELS', '').split(',')
+                       if m.strip()]
+
+# Looks at images and screenshots for read_image; it must accept image input.
+VISION_MODEL = os.getenv('VISION_MODEL', "google/gemini-3.8-flash")
 
 # The MCP servers that ship with the app. They are seeded into the
 # mcp_servers table for every user and connected at startup, so this tuple is

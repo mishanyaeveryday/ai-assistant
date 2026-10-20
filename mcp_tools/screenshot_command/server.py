@@ -1,27 +1,39 @@
+import base64
 import io
 import os
 import sys
 import mimetypes
 from datetime import datetime
+from functools import cache
 from typing import Annotated
 from PIL import ImageGrab
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
-from google import genai
-from google.genai import types
-from google.genai import errors as genai_errors
+import openai
+from openai import AsyncOpenAI
 
 try:
-    from config.settings import SCREENSHOT_DIR, WORKSPACE_DIR, GENAI_API_KEY, GENAI_MODEL
+    from config.settings import (SCREENSHOT_DIR, WORKSPACE_DIR, OPENROUTER_API_KEY,
+                                 OPENROUTER_BASE_URL, VISION_MODEL)
 except ImportError:
     current_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(current_dir, "..", ".."))
     sys.path.insert(0, project_root)
-    from config.settings import SCREENSHOT_DIR, WORKSPACE_DIR, GENAI_API_KEY, GENAI_MODEL
+    from config.settings import (SCREENSHOT_DIR, WORKSPACE_DIR, OPENROUTER_API_KEY,
+                                 OPENROUTER_BASE_URL, VISION_MODEL)
 
 mcp = FastMCP("screenshot")
 
-_genai_client = genai.Client(api_key=GENAI_API_KEY)
+
+@cache
+def _llm() -> AsyncOpenAI:
+    # Built on first use: the SDK refuses to build a client without a key, and
+    # the server must still start so the app can list its tools.
+    if not OPENROUTER_API_KEY:
+        raise openai.OpenAIError("OPENROUTER_API_KEY is not set in .env")
+    # The SDK retries 429s and 5xx by itself, which covers a model that is
+    # briefly overloaded.
+    return AsyncOpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL, max_retries=3)
 
 WORKSPACE = Path(SCREENSHOT_DIR).resolve()
 WORKSPACE.mkdir(parents=True, exist_ok=True)
@@ -96,21 +108,24 @@ async def read_image(
         "exactly as it appears."
     )
 
+    data_url = f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode()}"
     try:
-        response = await _genai_client.aio.models.generate_content(
-            model=GENAI_MODEL,
-            contents=[
-                types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
-                prompt,
-            ],
+        response = await _llm().chat.completions.create(
+            model=VISION_MODEL,
+            messages=[{"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": data_url}},
+                {"type": "text", "text": prompt},
+            ]}],
         )
-    except (genai_errors.ClientError, genai_errors.ServerError) as e:
+    except openai.OpenAIError as e:
         message = str(e).lower()
-        if any(kw in message for kw in ("image", "modalit", "mime_type", "unsupported")):
-            return f"Model '{GENAI_MODEL}' does not support reading images."
+        if isinstance(e, openai.APIStatusError) and any(
+                kw in message for kw in ("image", "modalit", "mime", "unsupported")):
+            return f"Model '{VISION_MODEL}' does not support reading images."
         return f"Failed to read image via the model: {e}"
 
-    return (response.text or "").strip() or "The model returned no output for this image."
+    text = response.choices[0].message.content if response.choices else None
+    return (text or "").strip() or "The model returned no output for this image."
 
 
 if __name__ == "__main__":

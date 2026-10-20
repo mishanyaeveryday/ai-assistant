@@ -1,24 +1,13 @@
-from config.settings import GENAI_API_KEY, GENAI_MODEL
-from core.llm_client import GeminiClient
-from google.genai import types
-from agent.tools_adapter import ApproveToolFn, ToolsAdapter
+import json
+
+from config.settings import LLM_FALLBACK_MODELS, LLM_MODEL, OPENROUTER_API_KEY, OPENROUTER_BASE_URL
+from core.llm_client import LLMClient
+from agent.tools_adapter import ApproveToolFn, ToolsAdapter, error_result
 from agent.tools_policy import ToolsApprovalPolicy
 
 
-def _response_to_text(response) -> str:
-    text = getattr(response, "text", None)
-    if text is not None and str(text).strip():
-        return str(text).strip()
-    cand = response.candidates[0] if response.candidates else None
-    if not cand or not cand.content:
-        return ""
-    parts_out = []
-    for p in cand.content.parts or []:
-        if getattr(p, "text", None):
-            parts_out.append(p.text)
-        elif getattr(p, "thought", None):
-            continue
-    return "\n".join(parts_out).strip()
+def _response_to_text(message) -> str:
+    return (message.content or "").strip()
 
 
 class AIClient:
@@ -28,11 +17,13 @@ class AIClient:
         mcp_registry,
         tools_approval_policy: ToolsApprovalPolicy | None = None,
         approve_tool: ApproveToolFn | None = None,
-        model=GENAI_MODEL,
+        model=LLM_MODEL,
     ):
-        self.llm = GeminiClient(
+        self.llm = LLMClient(
             llm_model=model,
-            api_key=GENAI_API_KEY
+            api_key=OPENROUTER_API_KEY,
+            base_url=OPENROUTER_BASE_URL,
+            fallback_models=LLM_FALLBACK_MODELS,
         )
         self.mcp_registry = mcp_registry
         self.tools_adapter = ToolsAdapter(
@@ -60,55 +51,59 @@ guments.""")
     async def thinking_loop(
         self,
         count: int = 5,
-        contents: list = None,
-        gemini_tools: types.Tool = None,
+        messages: list = None,
+        tools: list = None,
         temperature: float = 0.3,
     ):
-        if contents is None:
-            contents = []
-        response = None
+        if messages is None:
+            messages = []
+        message = None
         for _ in range(count):
-            response = await self.llm.generate(contents=contents, tools=gemini_tools,
-                                               temperature=temperature, system_prompt=self.system_prompt)
-            if response.candidates:
-                contents.append(response.candidates[0].content)
-            if getattr(response, "function_calls", None):
-                tool_parts = []
-                if 'gemini' in self.llm.llm_model:
-                    for t in response.function_calls:
-                        raw_args = getattr(t, "args", None)
-                        args = raw_args if isinstance(raw_args, dict) else {}
-                        print(f"Tool called: {t.name} args={args}")
-                        part = await self.tools_adapter.call_and_format(t.name, args)
-                        if part is not None:
-                            tool_parts.append(part)
-                contents.append(types.Content(parts=tool_parts))
-                continue
-            break
-        return response
+            message = await self.llm.generate(messages=messages, tools=tools,
+                                              temperature=temperature)
+            # Sent back whole: reasoning models (Gemini 3 among them) need
+            # their reasoning_details to carry on after a tool call.
+            messages.append(message.model_dump(exclude_none=True))
+            if not message.tool_calls:
+                break
+            # Every call needs an answer, or the next request is rejected.
+            for call in message.tool_calls:
+                messages.append({"role": "tool", "tool_call_id": call.id,
+                                 "content": await self._run_tool_call(call)})
+        return message
+
+    async def _run_tool_call(self, call) -> str:
+        name = call.function.name
+        try:
+            args = json.loads(call.function.arguments or "{}")
+        except json.JSONDecodeError:
+            args = None
+        if not isinstance(args, dict):
+            return error_result("The arguments were not a valid JSON object.")
+        print(f"Tool called: {name} args={args}")
+        return await self.tools_adapter.call_and_format(name, args)
 
     async def ask(self, user_prompt: str, temperature: float = 0.3, selected_tool: list = None) -> str:
         self.tools_adapter.generated_images = []
-        contents = self._format_history(memory=self.memory)
-        contents.append(types.Content(role='user', parts=[
-                        types.Part.from_text(text=user_prompt)]))
+        messages = [{"role": "system", "content": self.system_prompt},
+                    *self._format_history(memory=self.memory),
+                    {"role": "user", "content": user_prompt}]
 
         raw_tools = selected_tool or await self.mcp_registry.get_tools()
-        # No enabled servers means no tool list at all: an empty Tool with zero
-        # declarations is rejected by the API.
-        gemini_tools = [self.tools_adapter.mcp_tools_to_gemini_declarations(
-            mcp_tools=raw_tools)] if raw_tools else None
-        # print(f'Gemini Tools:{gemini_tools}')
-        response = await self.thinking_loop(
+        # No enabled servers means no tool list at all: some providers reject
+        # an empty one.
+        tools = self.tools_adapter.mcp_tools_to_openai_tools(
+            mcp_tools=raw_tools) if raw_tools else None
+        message = await self.thinking_loop(
             count=5,
-            contents=contents,
-            gemini_tools=gemini_tools,
+            messages=messages,
+            tools=tools,
             temperature=temperature,
         )
-        if response is None or not getattr(response, "candidates", None):
+        if message is None:
             text = "Sorry — no reply from the model."
         else:
-            text = _response_to_text(response)
+            text = _response_to_text(message)
 
         for path in self.tools_adapter.generated_images:
             text += f"\n[GENERATED_IMAGE:{path}]"
@@ -118,9 +113,7 @@ guments.""")
         last_messages = []
         for m in memory:
             if 'input' in m:
-                last_messages.append(types.Content(
-                    role='user', parts=[types.Part.from_text(text=m['input'])]))
+                last_messages.append({"role": "user", "content": m['input']})
             elif 'output' in m and m['output'] is not None:
-                last_messages.append(types.Content(
-                    role='model', parts=[types.Part.from_text(text=m['output'])]))
+                last_messages.append({"role": "assistant", "content": m['output']})
         return last_messages

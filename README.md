@@ -6,14 +6,14 @@ Desktopowa aplikacja z graficznym interfejsem (PySide6), umożliwiająca rozmow�
 
 - **Rejestracja i logowanie** — konta użytkowników, hasła hashowane (bcrypt)
 - **Wiele czatów** — tworzenie czatów, przełączanie między nimi, historia wiadomości
-- **Asystent AI** — odpowiedzi generowane przez model Gemini (LangChain), z pamięcią kontekstu w obrębie czatu
+- **Asystent AI** — odpowiedzi generowane przez dowolny model z [OpenRouter](https://openrouter.ai/models) (domyślnie Gemini Flash), z pamięcią kontekstu w obrębie czatu
 - **Narzędzia MCP** — wyszukiwanie w internecie (Tavily), operacje na plikach, terminal, zrzuty ekranu, sterowanie myszą/klawiaturą oraz **sandbox kodu Python w Dockerze** — wszystko przez serwery MCP
 - **Baza SQLite** — użytkownicy, czaty i historia wiadomości przechowywane lokalnie
 
 ## Wymagania
 
 - Python 3.12+
-- Konto i klucze API: Google AI (Gemini), Tavily
+- Konto i klucze API: OpenRouter, Tavily
 - (Opcjonalnie) **`uv`** — [instrukcja instalacji](https://docs.astral.sh/uv/getting-started/installation/) lub klasycznie **`pip`**
 - (Opcjonalnie) **Docker Desktop** — tylko jeśli będziesz używać sandboxa kodu (`DOCKER_CONTAINER`, patrz niżej). **Do samego GUI asystenta Docker nie jest wymagany.**
 
@@ -69,7 +69,7 @@ Otwórz **`.env`** w edytorze i ustaw przynajmniej:
 
 | Zmienna            | Opis                                                |
 |--------------------|-----------------------------------------------------|
-| `GENAI_API_KEY`    | klucz z [Google AI Studio](https://aistudio.google.com/apikey) |
+| `OPENROUTER_API_KEY` | klucz z [OpenRouter](https://openrouter.ai/keys); modele płatne wymagają doładowania kredytów |
 | `TAVILY_API_KEY`   | klucz z [Tavily](https://tavily.com/) — **wymagany**, inaczej `config/settings.py` rzuci `ValueError` przy starcie |
 
 `DOCKER_CONTAINER` zostaw puste lub uzupełnij dopiero po zbudowaniu obrazu Dockera — patrz **[Kontener Docker (sandbox kodu Python)](#kontener-docker-sandbox-kodu-python)** niżej w README.
@@ -163,14 +163,22 @@ Zawartość szablonu można opisać tak:
 
 ```env
 # Wymagane — patrz wyjaśnienia niżej
-GENAI_API_KEY=...
+OPENROUTER_API_KEY=...
 TAVILY_API_KEY=...
+
+# Opcjonalne — modele z OpenRouter
+LLM_MODEL=google/gemini-3.8-flash
+LLM_FALLBACK_MODELS=
+VISION_MODEL=google/gemini-3.8-flash
 
 # Opcjonalne — nazwa lub tag obrazu Dockera dla sandboxa kodu (patrz „Kontener Docker”)
 DOCKER_CONTAINER=...
 ```
 
-- **GENAI_API_KEY** — [Google AI Studio](https://aistudio.google.com/apikey), model: `gemini-2.5-flash`
+- **OPENROUTER_API_KEY** — [OpenRouter](https://openrouter.ai/keys); jeden klucz daje dostęp do modeli wielu dostawców (Google, OpenAI, Anthropic i in.)
+- **LLM_MODEL** — identyfikator modelu z [listy OpenRouter](https://openrouter.ai/models), który obsługuje narzędzia (tools); domyślnie `google/gemini-3.8-flash`
+- **LLM_FALLBACK_MODELS** — modele (oddzielone przecinkami), na które OpenRouter przełączy się, gdy `LLM_MODEL` zwróci błąd; domyślnie wyłączone
+- **VISION_MODEL** — model, który ogląda obrazy i zrzuty ekranu (`read_image`); musi obsługiwać obrazy na wejściu
 - **TAVILY_API_KEY** — [Tavily](https://tavily.com/) — zmienna jest wymagana przez `config/settings.py`; bez niej aplikacja nie wystartuje
 - **DOCKER_CONTAINER** — nazwa/tag zbudowanego obrazu Dockera, którego używa narzędzie MCP **`run_python_code`** (`mcp_tools/code_interpreter/server.py`) do uruchamiania kodu Python w sandboxie. Bez tej zmiennej narzędzie jest zarejestrowane w GUI, ale przy próbie użycia zwróci błąd — patrz **[Kontener Docker (sandbox kodu Python)](#kontener-docker-sandbox-kodu-python)**
 

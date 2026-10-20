@@ -1,7 +1,6 @@
+import json
 import re
 from collections.abc import Awaitable, Callable
-
-from google.genai import types
 
 from agent.tools_policy import ToolsApprovalPolicy
 
@@ -22,8 +21,8 @@ class ToolsAdapter:
         self.approve_tool = approve_tool
         self.generated_images: list[str] = []
 
-    def mcp_tools_to_gemini_declarations(self, mcp_tools):
-        declaration = []
+    def mcp_tools_to_openai_tools(self, mcp_tools) -> list[dict]:
+        tools = []
         for tool in mcp_tools:
             # Cached catalogue entries are plain dicts; a caller passing live
             # MCP tool objects (selected_tool) still works.
@@ -34,23 +33,25 @@ class ToolsAdapter:
             else:
                 name, description, schema = (
                     tool.name, tool.description, tool.inputSchema)
-            declaration.append(types.FunctionDeclaration(
-                name=name, description=description, parameters=schema))
-        return types.Tool(function_declarations=declaration)
+            tools.append({"type": "function", "function": {
+                "name": name, "description": description,
+                # A tool without arguments still needs an object schema.
+                "parameters": schema or {"type": "object", "properties": {}}}})
+        return tools
 
-    async def call_and_format(self, name: str, args: dict):
+    async def call_and_format(self, name: str, args: dict) -> str:
+        """Runs the tool if allowed and returns what the model is shown."""
         is_builtin = self.mcp_registry.is_builtin_tool(name)
         if self.tools_approval_policy.requires_approval(name, is_builtin=is_builtin):
             if self.approve_tool is None:
-                return self._denial_part(
-                    name, "Approval is required but no approve handler was configured."
-                )
+                return error_result(
+                    "Approval is required but no approve handler was configured.")
             allowed = await self.approve_tool(name, args or {})
             if not allowed:
-                return self._denial_part(name, "User denied execution.")
+                return error_result("User denied execution.")
         result = await self.mcp_registry.call_tool(name, args or {})
         self._collect_generated_images(result)
-        return types.Part.from_function_response(name=name, response={"result": result})
+        return _result_text(result)
 
     def _collect_generated_images(self, result) -> None:
         """Pull out any [GENERATED_IMAGE:path] markers a tool left in its text
@@ -66,9 +67,21 @@ class ToolsAdapter:
                     self.generated_images.append(path)
             content.text = _IMAGE_MARKER_RE.sub("", text).strip()
 
-    @staticmethod
-    def _denial_part(name: str, message: str):
-        return types.Part.from_function_response(
-            name=name,
-            response={"ok": False, "error": message},
-        )
+
+def error_result(message: str) -> str:
+    return json.dumps({"ok": False, "error": message}, ensure_ascii=False)
+
+
+def _result_text(result) -> str:
+    """A tool result as text: the text blocks of an MCP result, one per line."""
+    texts = []
+    for content in getattr(result, "content", None) or []:
+        text = getattr(content, "text", None)
+        texts.append(text if text is not None
+                     else f"[{getattr(content, 'type', 'unknown')} content]")
+    text = "\n".join(texts)
+    if not text and getattr(result, "structuredContent", None):
+        text = json.dumps(result.structuredContent, ensure_ascii=False)
+    if getattr(result, "isError", False):
+        return error_result(text)
+    return text or "(no output)"
