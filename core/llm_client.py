@@ -13,6 +13,10 @@ RETRY_DELAYS_SECONDS = (2, 5, 10)
 # allow a fixed number of requests per day), and waiting would only stall.
 MAX_RETRY_AFTER_SECONDS = 30
 
+# The SDK would wait up to 10 minutes for a reply, which looks like a frozen
+# app. A request this slow is stuck, and is retried like any other failure.
+REQUEST_TIMEOUT_SECONDS = 90
+
 
 class EmptyResponseError(Exception):
     """OpenRouter answered, but with no choice in it - the provider behind it
@@ -51,13 +55,17 @@ class LLMClient:
         self.fallback_models = list(fallback_models)
         # The retries are done in generate(), which tells a used-up quota from
         # a short spike; the SDK's own would stack on top of them.
-        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url, max_retries=0)
+        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url, max_retries=0,
+                                  timeout=REQUEST_TIMEOUT_SECONDS)
 
-    async def generate(self, messages, tools, temperature):
-        """Returns the reply message: its text, or the tools it wants called."""
+    async def generate(self, messages, tools, temperature, tool_choice=None):
+        """Returns the reply message: its text, or the tools it wants called.
+        tool_choice="none" makes the model answer in text."""
         request = dict(model=self.llm_model, messages=messages, temperature=temperature)
         if tools:
             request["tools"] = tools
+            if tool_choice:
+                request["tool_choice"] = tool_choice
         if self.fallback_models:
             request["extra_body"] = {"models": [self.llm_model, *self.fallback_models]}
 

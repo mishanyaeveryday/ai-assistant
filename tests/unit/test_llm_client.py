@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -44,30 +45,34 @@ def text_reply(text):
 
 def run_ask(*replies, registry=None):
     """Asks once, with the model giving `replies` in turn and repeating the
-    last one. Returns the answer and what each turn was sent."""
+    last one; a reply may be a function of the request's options. Returns the
+    answer and the fake model, which keeps what each turn was sent."""
     from agent import orchestrator
 
     class FakeLLM:
         def __init__(self, llm_model, **kwargs):
             self.llm_model = llm_model
             self.sent = []
+            self.options = []
 
         async def generate(self, messages, **kwargs):
             self.sent.append(list(messages))
-            return replies[min(len(self.sent), len(replies)) - 1]
+            self.options.append(kwargs)
+            reply = replies[min(len(self.sent), len(replies)) - 1]
+            return reply(kwargs) if callable(reply) else reply
 
     with patch.object(orchestrator, "LLMClient", FakeLLM):
         client = orchestrator.AIClient(memory=[], mcp_registry=registry or FakeRegistry())
         answer = asyncio.run(client.ask("what is on the screen?"))
-    return answer, client.llm.sent
+    return answer, client.llm
 
 
 def test_tool_result_goes_back_with_the_call_and_its_reasoning():
     reasoning = [{"type": "reasoning.encrypted", "data": "sig", "format": "google-gemini-v1"}]
 
-    answer, sent = run_ask(tool_call(reasoning_details=reasoning), text_reply("Done."))
+    answer, llm = run_ask(tool_call(reasoning_details=reasoning), text_reply("Done."))
 
-    assistant, tool = sent[1][-2:]
+    assistant, tool = llm.sent[1][-2:]
     assert assistant["tool_calls"][0]["id"] == "call_1"
     assert assistant["reasoning_details"] == reasoning
     assert tool == {"role": "tool", "tool_call_id": "call_1", "content": "(no output)"}
@@ -77,10 +82,32 @@ def test_tool_result_goes_back_with_the_call_and_its_reasoning():
 def test_malformed_arguments_are_reported_to_the_model_not_run():
     registry = FakeRegistry()
 
-    _, sent = run_ask(tool_call(arguments="{not json"), text_reply("Sorry."), registry=registry)
+    _, llm = run_ask(tool_call(arguments="{not json"), text_reply("Sorry."), registry=registry)
 
     assert registry.calls == []
-    assert json.loads(sent[1][-1]["content"])["ok"] is False
+    assert json.loads(llm.sent[1][-1]["content"])["ok"] is False
+
+
+def test_running_out_of_rounds_still_ends_with_an_answer():
+    from agent.orchestrator import MAX_TOOL_ROUNDS
+
+    def model(options):
+        if options.get("tool_choice") == "none":
+            return text_reply("Here is what I found so far.")
+        return tool_call()
+
+    answer, llm = run_ask(model)
+
+    assert answer == "Here is what I found so far."
+    assert len(llm.sent) == MAX_TOOL_ROUNDS + 1
+    # The final request carries every tool result, the last one included.
+    assert llm.sent[-1][-1]["role"] == "tool"
+
+
+def test_model_that_never_stops_calling_tools_gets_a_note_not_an_empty_answer():
+    answer, _ = run_ask(tool_call())
+
+    assert "Stopped after" in answer
 
 
 def test_tools_are_declared_in_openai_format():
@@ -103,6 +130,25 @@ def test_denied_call_is_not_run():
 
     assert adapter.mcp_registry.calls == []
     assert json.loads(reply) == {"ok": False, "error": "User denied execution."}
+
+
+# --- Today's date ---
+
+def test_date_context_names_the_day_and_the_year_to_search_for():
+    from agent.orchestrator import date_context
+
+    text = date_context(datetime(2026, 10, 20, 14, 5, tzinfo=timezone(timedelta(hours=2))))
+
+    assert "Tuesday, 20 October 2026, 14:05 (UTC+0200)" in text
+    assert "use 2026" in text
+
+
+def test_model_is_told_todays_date():
+    _, llm = run_ask(text_reply("Hi."))
+
+    system = llm.sent[0][0]
+    assert system["role"] == "system"
+    assert datetime.now().astimezone().strftime("%d %B %Y") in system["content"]
 
 
 # --- Transient API errors ---
@@ -222,3 +268,21 @@ def test_fallback_models_are_offered_to_openrouter():
 
     assert calls[0]["extra_body"] == {"models": ["test-model", "other-model"]}
     assert "tools" not in calls[0]
+
+
+def test_tool_choice_is_sent_only_with_tools():
+    tools = [{"type": "function", "function": {"name": "web_search"}}]
+    client, calls = make_llm("answer", "answer")
+
+    async def no_wait(_):
+        pass
+
+    async def scenario():
+        await client.generate(messages=[], tools=tools, temperature=0, tool_choice="none")
+        await client.generate(messages=[], tools=None, temperature=0, tool_choice="none")
+
+    with patch("core.llm_client.asyncio.sleep", no_wait):
+        asyncio.run(scenario())
+
+    assert calls[0]["tool_choice"] == "none"
+    assert "tool_choice" not in calls[1]

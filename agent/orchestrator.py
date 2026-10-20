@@ -1,6 +1,8 @@
 import json
+from datetime import datetime
 
-from config.settings import LLM_FALLBACK_MODELS, LLM_MODEL, OPENROUTER_API_KEY, OPENROUTER_BASE_URL
+from config.settings import (LLM_FALLBACK_MODELS, LLM_MODEL, MAX_TOOL_ROUNDS, OPENROUTER_API_KEY,
+                             OPENROUTER_BASE_URL)
 from core.llm_client import LLMClient
 from agent.tools_adapter import ApproveToolFn, ToolsAdapter, error_result
 from agent.tools_policy import ToolsApprovalPolicy
@@ -8,6 +10,18 @@ from agent.tools_policy import ToolsApprovalPolicy
 
 def _response_to_text(message) -> str:
     return (message.content or "").strip()
+
+
+def date_context(now: datetime) -> str:
+    """The model has no other way to know today's date. Left to its training
+    data, it treats an earlier year as the present and searches for news,
+    prices and versions from back then."""
+    return (
+        f"Current date and time: {now:%A, %d %B %Y, %H:%M} (UTC{now:%z}). Your training data "
+        "is older than that, so for anything that may have changed since - news, prices, "
+        "versions, releases, events, anything \"latest\", \"current\" or \"this year\" - use "
+        "web_search instead of answering from memory. When a search needs a year, use "
+        f"{now.year} unless the user asked about another one.")
 
 
 class AIClient:
@@ -32,7 +46,8 @@ class AIClient:
             approve_tool=approve_tool,
         )
         self.memory = memory
-        self.system_prompt = str(
+        # Built per prompt (a client is made for each one), so the date is current.
+        self.system_prompt = date_context(datetime.now().astimezone()) + "\n\n" + str(
             """You are an AI assistant that manages files, runs terminal commands, and searches the web on the user's computer using connected tools.
 
 Rules for calling tools:
@@ -50,14 +65,13 @@ guments.""")
 
     async def thinking_loop(
         self,
-        count: int = 5,
+        count: int = MAX_TOOL_ROUNDS,
         messages: list = None,
         tools: list = None,
         temperature: float = 0.3,
     ):
         if messages is None:
             messages = []
-        message = None
         for _ in range(count):
             message = await self.llm.generate(messages=messages, tools=tools,
                                               temperature=temperature)
@@ -65,12 +79,16 @@ guments.""")
             # their reasoning_details to carry on after a tool call.
             messages.append(message.model_dump(exclude_none=True))
             if not message.tool_calls:
-                break
+                return message
             # Every call needs an answer, or the next request is rejected.
             for call in message.tool_calls:
                 messages.append({"role": "tool", "tool_call_id": call.id,
                                  "content": await self._run_tool_call(call)})
-        return message
+        # Out of rounds: the last reply was a tool call with no text, which
+        # would come out as an empty answer. Make the model answer with what
+        # it has found so far instead.
+        return await self.llm.generate(messages=messages, tools=tools,
+                                       temperature=temperature, tool_choice="none")
 
     async def _run_tool_call(self, call) -> str:
         name = call.function.name
@@ -95,15 +113,15 @@ guments.""")
         tools = self.tools_adapter.mcp_tools_to_openai_tools(
             mcp_tools=raw_tools) if raw_tools else None
         message = await self.thinking_loop(
-            count=5,
             messages=messages,
             tools=tools,
             temperature=temperature,
         )
-        if message is None:
-            text = "Sorry — no reply from the model."
-        else:
-            text = _response_to_text(message)
+        text = _response_to_text(message)
+        if not text:
+            # Some models still answer with a tool call after their last round.
+            text = (f"(Stopped after {MAX_TOOL_ROUNDS} steps without an answer - "
+                    "the task is not finished. Ask me to continue.)")
 
         for path in self.tools_adapter.generated_images:
             text += f"\n[GENERATED_IMAGE:{path}]"

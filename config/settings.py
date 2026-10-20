@@ -3,7 +3,10 @@ from dotenv import load_dotenv
 from pathlib import Path
 import os
 
-load_dotenv()
+# The .env next to main.py, wherever the app or an MCP server is started
+# from. A bare load_dotenv() searches upward from this file and would stop at
+# an old config/.env first.
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 WORKSPACE_DIR = os.getenv("WORKSPACE_DIR", str(
     Path.home() / "ai-assistant-workspace"))
@@ -61,6 +64,10 @@ BUILTIN_MCP_SERVERS: tuple[dict, ...] = (
 TOOLS_REQUIRING_APPROVAL: frozenset[str] = frozenset(
     {"terminal_command", "write_file", "delete_file", "append_file", "delete_text", "make_screenshot",
      "click", "type_text", "run_python_code"})
+
+# How many rounds of tool calls one prompt may take before the model has to
+# answer with what it has. Searching and saving a summary alone takes several.
+MAX_TOOL_ROUNDS = 25
 
 DOCKER_CONTAINER = os.getenv("DOCKER_CONTAINER")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
