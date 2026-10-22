@@ -10,7 +10,7 @@ MCP_SERVER_COLUMNS = frozenset({
     'id', 'user_id', 'name', 'transport', 'command', 'args', 'env',
     'url', 'headers', 'description', 'is_builtin', 'is_enabled', 'created_at',
     'last_status', 'last_error_code', 'last_error', 'last_checked_at',
-    'known_tools',
+    'known_tools', 'auto_approved_tools',
 })
 # Columns added after the table first shipped; create_table backfills them so
 # a database made by an earlier run keeps working.
@@ -20,9 +20,11 @@ MCP_SERVER_ADDED_COLUMNS = (
     ('last_error_code', 'TEXT'),
     ('last_error', 'TEXT'),
     ('last_checked_at', 'TEXT'),
+    ('auto_approved_tools', 'TEXT'),
 )
 MCP_SERVER_EDITABLE_COLUMNS = MCP_SERVER_COLUMNS - {'id', 'user_id', 'created_at'}
-MCP_SERVER_JSON_COLUMNS = frozenset({'args', 'env', 'headers', 'known_tools'})
+MCP_SERVER_JSON_COLUMNS = frozenset({'args', 'env', 'headers', 'known_tools',
+                                     'auto_approved_tools'})
 MCP_SERVER_TRANSPORTS = frozenset({'stdio', 'http'})
 
 
@@ -385,6 +387,7 @@ class MCPServer_DB:
                     is_enabled INTEGER DEFAULT 1,
                     created_at TEXT,
                     known_tools TEXT,
+                    auto_approved_tools TEXT,
                     last_status TEXT,
                     last_error_code TEXT,
                     last_error TEXT,

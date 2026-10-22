@@ -306,17 +306,20 @@ class PromptInput(QPlainTextEdit):
         self.setFixedHeight(self.height_for_lines(min(max(lines, 1), self._MAX_VISIBLE_LINES)))
 
 
-class ElidedPathLabel(QLabel):
-    """A path cut short from the left when it does not fit, so the folder's
-    own name stays readable; the full path is in the tooltip. A plain label
-    would instead widen the whole chat panel to fit a long path."""
+class ElidedLabel(QLabel):
+    """One line of text cut short with … when it does not fit; the full text
+    is in the tooltip. A plain label would instead widen its whole panel to
+    fit a long line. Paths are cut from the left, so the folder's own name
+    stays."""
 
-    def __init__(self, parent=None):
+    def __init__(self, text: str = "", mode=Qt.TextElideMode.ElideRight, parent=None):
         super().__init__(parent)
-        self._full_text = ""
+        self._mode = mode
+        self.setTextFormat(Qt.TextFormat.PlainText)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.set_full_text(text)
 
-    def set_path(self, text: str):
+    def set_full_text(self, text: str):
         self._full_text = text
         self.setToolTip(text)
         self._elide()
@@ -327,7 +330,7 @@ class ElidedPathLabel(QLabel):
 
     def _elide(self):
         self.setText(self.fontMetrics().elidedText(
-            self._full_text, Qt.TextElideMode.ElideLeft, self.width()))
+            self._full_text, self._mode, self.width()))
 
 
 def _display_path(path: str) -> str:
@@ -444,6 +447,8 @@ class MCPServersSection(QFrame):
     delete_requested = Signal(str)
     enabled_changed = Signal(str, bool)
     check_requested = Signal(str)
+    # (server id, tool name, allowed): let the tool run without asking.
+    auto_approve_changed = Signal(str, str, bool)
     # Shown again - the controller re-reads the list so statuses are current.
     opened = Signal()
 
@@ -482,6 +487,11 @@ class MCPServersSection(QFrame):
         self.rows_layout.setContentsMargins(0, 0, 0, 0)
         self.rows_layout.setSpacing(8)
         layout.addWidget(self.rows_container)
+
+        # Every refresh rebuilds the rows - and checks refresh them several
+        # times on login - so which tool lists are open is kept here.
+        self._servers: list[dict] = []
+        self._expanded: set[str] = set()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -610,9 +620,14 @@ class MCPServersSection(QFrame):
         })
 
     def show_servers(self, servers: list[dict]):
+        self._servers = servers
         while self.rows_layout.count():
             item = self.rows_layout.takeAt(0)
             if item.widget() is not None:
+                # Hidden first: until deleteLater gets to it, an old row would
+                # still paint under the new ones - which now differ in height
+                # whenever a tool list is opened or closed.
+                item.widget().hide()
                 item.widget().deleteLater()
 
         if not servers:
@@ -627,12 +642,16 @@ class MCPServersSection(QFrame):
     def _build_row(self, server: dict) -> QFrame:
         server_id = server['id']
         checking = server['status'] == 'checking'
+        expanded = server_id in self._expanded
 
         row = QFrame()
         row.setObjectName("server_row")
-        row_layout = QHBoxLayout(row)
-        row_layout.setContentsMargins(12, 10, 12, 10)
+        outer_layout = QVBoxLayout(row)
+        outer_layout.setContentsMargins(12, 10, 12, 10)
+        outer_layout.setSpacing(10)
+        row_layout = QHBoxLayout()
         row_layout.setSpacing(10)
+        outer_layout.addLayout(row_layout)
 
         info = QVBoxLayout()
         info.setSpacing(2)
@@ -664,6 +683,14 @@ class MCPServersSection(QFrame):
             status.setToolTip(server['error'])
         info.addWidget(status)
         row_layout.addLayout(info, 1)
+
+        tools_button = QPushButton("Hide tools" if expanded else "Tools")
+        tools_button.setObjectName("secondary_button")
+        tools_button.setToolTip("Choose which of its tools may run without asking")
+        tools_button.setMinimumWidth(110)
+        tools_button.clicked.connect(
+            lambda _, sid=server_id: self._toggle_tools(sid))
+        row_layout.addWidget(tools_button)
 
         # While a check runs its result is about to overwrite the row, so the
         # controls that change the row wait for it.
@@ -700,7 +727,90 @@ class MCPServersSection(QFrame):
                 lambda _, sid=server_id, title=server['name']: self.confirm_delete(sid, title))
             row_layout.addWidget(delete_button)
 
+        if expanded:
+            outer_layout.addWidget(self._build_tools_panel(server))
+
         return row
+
+    def _toggle_tools(self, server_id: str):
+        if server_id in self._expanded:
+            self._expanded.discard(server_id)
+        else:
+            self._expanded.add(server_id)
+        self.show_servers(self._servers)
+
+    def _build_tools_panel(self, server: dict) -> QFrame:
+        """The server's tools, each with whether it asks before running."""
+        panel = QFrame()
+        panel.setObjectName("tools_panel")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
+
+        tools = server['tool_list']
+        if not tools:
+            empty = QLabel("Check the server to see its tools.")
+            empty.setObjectName("hint_text")
+            layout.addWidget(empty)
+            return panel
+
+        hint = QLabel("An allowed tool runs as soon as the model calls it - no card "
+                      "in the chat to stop it. Allow only what you trust it to do on its own.")
+        hint.setObjectName("hint_text")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        for tool in tools:
+            layout.addWidget(self._build_tool_line(server['id'], tool))
+        return panel
+
+    def _build_tool_line(self, server_id: str, tool: dict) -> QWidget:
+        line = QWidget()
+        line.setObjectName("server_list")
+        line_layout = QHBoxLayout(line)
+        line_layout.setContentsMargins(0, 0, 0, 0)
+        line_layout.setSpacing(10)
+
+        text = QVBoxLayout()
+        text.setSpacing(0)
+        name = _plain_label(tool['name'])
+        name.setObjectName("tool_name")
+        text.addWidget(name)
+        description = tool['description']
+        if description:
+            # One line, the rest in the tooltip: some tools come with a whole
+            # paragraph.
+            summary = ElidedLabel(description.splitlines()[0])
+            summary.setObjectName("hint_text")
+            summary.setToolTip(description)
+            text.addWidget(summary)
+        line_layout.addLayout(text, 1)
+
+        if tool['shadowed_by']:
+            # The model reaches the other server's tool by this name, so a
+            # switch here would do nothing.
+            note = _plain_label(f'Used from "{tool["shadowed_by"]}"')
+            note.setObjectName("hint_text")
+            line_layout.addWidget(note)
+        elif not tool['asks_by_default']:
+            note = QLabel("Never asks")
+            note.setObjectName("hint_text")
+            note.setToolTip("This tool runs without asking anyway.")
+            line_layout.addWidget(note)
+        else:
+            allowed = tool['auto_approved']
+            switch = QPushButton("Runs without asking" if allowed else "Asks first")
+            switch.setObjectName("toggle_button")
+            switch.setCheckable(True)
+            switch.setChecked(allowed)
+            switch.setMinimumWidth(170)
+            switch.setToolTip("Click to make it ask first again" if allowed
+                              else "Click to let it run without asking")
+            switch.toggled.connect(
+                lambda checked, sid=server_id, tool_name=tool['name']:
+                    self.auto_approve_changed.emit(sid, tool_name, checked))
+            line_layout.addWidget(switch, 0, Qt.AlignmentFlag.AlignTop)
+        return line
 
     @staticmethod
     def _status_text(server: dict) -> str:
@@ -958,7 +1068,7 @@ class ChatPage(QWidget):
         title = QLabel("Workspace:")
         title.setObjectName("hint_text")
         # Filled in by show_workspace once the controller has looked it up.
-        self.workspace_label = ElidedPathLabel()
+        self.workspace_label = ElidedLabel(mode=Qt.TextElideMode.ElideLeft)
         self.workspace_label.setObjectName("workspace_path")
         self.workspace_change_button = QPushButton("Change…")
         self.workspace_change_button.setObjectName("workspace_button")
@@ -981,7 +1091,7 @@ class ChatPage(QWidget):
             return
         self._workspace_path = path
         shown = _display_path(path)
-        self.workspace_label.set_path(f"{shown} (default)" if is_default else shown)
+        self.workspace_label.set_full_text(f"{shown} (default)" if is_default else shown)
         self.workspace_reset_button.setVisible(not is_default)
 
     def _pick_workspace(self):

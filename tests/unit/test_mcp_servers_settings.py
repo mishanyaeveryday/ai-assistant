@@ -146,6 +146,7 @@ class FakeView(QObject):
     delete_requested = Signal(str)
     enabled_changed = Signal(str, bool)
     check_requested = Signal(str)
+    auto_approve_changed = Signal(str, str, bool)
     opened = Signal()
 
     def __init__(self):

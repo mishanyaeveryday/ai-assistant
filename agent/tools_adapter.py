@@ -42,7 +42,9 @@ class ToolsAdapter:
     async def call_and_format(self, name: str, args: dict) -> str:
         """Runs the tool if allowed and returns what the model is shown."""
         is_builtin = self.mcp_registry.is_builtin_tool(name)
-        if self.tools_approval_policy.requires_approval(name, is_builtin=is_builtin):
+        auto_approved = self.mcp_registry.is_auto_approved(name)
+        if self.tools_approval_policy.requires_approval(
+                name, is_builtin=is_builtin, auto_approved=auto_approved):
             if self.approve_tool is None:
                 return error_result(
                     "Approval is required but no approve handler was configured.")

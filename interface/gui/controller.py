@@ -374,6 +374,9 @@ class MCPServersController(QObject):
         self._model = model
         self._view = view
         self._mcp_registry = mcp_registry
+        # Tells which tools ask before running unless the user allowed them -
+        # the same rule the chat applies.
+        self._approval_policy = ToolsApprovalPolicy()
         self._active = True
         self._checking: set[str] = set()
         # asyncio only holds weak references to tasks, so they are kept here.
@@ -385,6 +388,7 @@ class MCPServersController(QObject):
         self._view.delete_requested.connect(self.handle_delete)
         self._view.enabled_changed.connect(self.handle_enabled_changed)
         self._view.check_requested.connect(self.handle_check)
+        self._view.auto_approve_changed.connect(self.handle_auto_approve_changed)
 
     def disconnect_view(self):
         """Lets go of the (long-lived) view before the next login builds a new
@@ -396,6 +400,7 @@ class MCPServersController(QObject):
         self._view.delete_requested.disconnect(self.handle_delete)
         self._view.enabled_changed.disconnect(self.handle_enabled_changed)
         self._view.check_requested.disconnect(self.handle_check)
+        self._view.auto_approve_changed.disconnect(self.handle_auto_approve_changed)
         for task in list(self._check_tasks):
             task.cancel()
 
@@ -403,9 +408,29 @@ class MCPServersController(QObject):
         if not self._active:
             return
         servers = self._model.get_user_servers(user_id=self._user.id)
-        self._view.show_servers([self._row_data(s) for s in servers])
+        _, owners = self._model.get_tool_catalogue(user_id=self._user.id)
+        self._view.show_servers([self._row_data(s, owners) for s in servers])
 
-    def _row_data(self, server: MCPServer) -> dict:
+    def _tool_list(self, server: MCPServer, owners: dict) -> list[dict]:
+        tools = []
+        for spec in server.known_tools:
+            name = spec.get('name')
+            if not name:
+                continue
+            owner = owners.get(name)
+            tools.append({
+                'name': name,
+                'description': (spec.get('description') or '').strip(),
+                'asks_by_default': self._approval_policy.requires_approval(
+                    name, is_builtin=server.is_builtin),
+                'auto_approved': name in server.auto_approved_tools,
+                # The model only ever reaches the first server offering a
+                # name, so this one's setting would change nothing.
+                'shadowed_by': owner.name if owner is not None and owner.id != server.id else None,
+            })
+        return tools
+
+    def _row_data(self, server: MCPServer, owners: dict) -> dict:
         if server.transport == MCPServer.HTTP:
             target = server.url or ""
         else:
@@ -435,6 +460,7 @@ class MCPServersController(QObject):
             'target': target,
             'status': status,
             'tools': len(server.known_tools),
+            'tool_list': self._tool_list(server, owners),
             'error_code': server.last_error_code,
             'error': server.last_error,
         }
@@ -471,6 +497,12 @@ class MCPServersController(QObject):
 
         self._stop_server(server_id)
         self._model.delete_server(server_id)
+        self.refresh()
+
+    def handle_auto_approve_changed(self, server_id: str, tool_name: str, allowed: bool):
+        """Takes effect on the tool's next call, in a task already running
+        too. A card already waiting in a chat still needs its answer."""
+        self._model.set_tool_auto_approved(server_id, tool_name, allowed)
         self.refresh()
 
     def handle_enabled_changed(self, server_id: str, enabled: bool):

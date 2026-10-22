@@ -8,6 +8,7 @@ Desktopowa aplikacja z graficznym interfejsem (PySide6), umożliwiająca rozmow�
 - **Wiele czatów** — tworzenie czatów, przełączanie między nimi, historia wiadomości
 - **Asystent AI** — odpowiedzi generowane przez dowolny model z [OpenRouter](https://openrouter.ai/models) (domyślnie Gemini Flash), z pamięcią kontekstu w obrębie czatu
 - **Narzędzia MCP** — wyszukiwanie w internecie (Tavily), operacje na plikach, terminal, zrzuty ekranu, sterowanie myszą/klawiaturą oraz **sandbox kodu Python w Dockerze** — wszystko przez serwery MCP
+- **Potwierdzanie narzędzi** — narzędzia działające na komputerze (zapis/usuwanie plików, terminal, kod Python, zrzuty ekranu, mysz/klawiatura) oraz wszystkie narzędzia serwerów dodanych przez użytkownika pytają o zgodę w czacie. W **Ustawieniach → MCP servers → Tools** każdy użytkownik może pozwolić wybranym narzędziom działać bez pytania
 - **Baza SQLite** — użytkownicy, czaty i historia wiadomości przechowywane lokalnie
 
 ## Wymagania

@@ -20,6 +20,9 @@ class FakeRegistry:
     def is_builtin_tool(self, name):
         return True
 
+    def is_auto_approved(self, name):
+        return False
+
     async def get_tools(self):
         return []
 

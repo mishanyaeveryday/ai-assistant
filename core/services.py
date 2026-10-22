@@ -249,6 +249,21 @@ class MCPServerService:
     def set_server_enabled(self, server_id: str, enabled: bool) -> bool:
         return self.mcp_server_db.update_server(server_id, is_enabled=enabled)
 
+    def set_tool_auto_approved(self, server_id: str, tool_name: str, allowed: bool) -> bool:
+        """Lets one of this server's tools run without asking, or makes it
+        ask again. Kept on the server's row, so it is per user and goes away
+        with the server."""
+        server = self.get_server(server_id)
+        if server is None:
+            return False
+        names = set(server.auto_approved_tools)
+        if allowed:
+            names.add(tool_name)
+        else:
+            names.discard(tool_name)
+        return self.mcp_server_db.update_server(
+            server_id, auto_approved_tools=sorted(names))
+
     def delete_server(self, server_id: str) -> bool:
         """Removes the server along with the secrets created for it."""
         server = self.get_server(server_id)

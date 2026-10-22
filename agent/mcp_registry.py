@@ -41,6 +41,18 @@ class MCPRegistry:
         owner = self._owners.get(tool_name)
         return bool(owner and owner.is_builtin)
 
+    def is_auto_approved(self, tool_name: str) -> bool:
+        """Whether the user lets this tool run without asking. Read from the
+        database on each call rather than from the catalogue taken when the
+        task started, so a change in settings counts straight away. Keyed on
+        the server that owns the tool: one re-using another's tool name does
+        not inherit its permission."""
+        owner = self._owners.get(tool_name)
+        if owner is None:
+            return False
+        server = self._service.get_server(owner.id)
+        return server is not None and tool_name in server.auto_approved_tools
+
     async def stop_server(self, server_id: str) -> bool:
         """Shuts down a server that was switched off or removed in settings.
         Left running, it would keep serving calls - and a running connection

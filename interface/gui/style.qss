@@ -345,6 +345,18 @@ QLabel#server_name {
     font-weight: 600;
 }
 
+/* A server's tools, opened under its row */
+QFrame#tools_panel {
+    background-color: #f8f9fc;
+    border: 1px solid #e5e7ec;
+    border-radius: 8px;
+}
+
+QLabel#tool_name {
+    font-family: Menlo, Consolas, monospace;
+    font-size: 13px;
+}
+
 /* On/off switch of a server: green while it is on */
 QPushButton#toggle_button {
     background-color: #eceef4;
