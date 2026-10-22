@@ -121,15 +121,43 @@ class Chat_DB:
     def create_table(self):
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            # workspace: the folder this chat's tools work in. NULL means the
+            # default WORKSPACE_DIR, so moving that in .env moves every chat
+            # that never picked its own.
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS chats (
                     id TEXT PRIMARY KEY,
                     title TEXT,
                     user_id TEXT,
-                    created_at TEXT
+                    created_at TEXT,
+                    workspace TEXT
                 )
             """)
+
+            # Added after the table first shipped.
+            existing = {row[1] for row in cursor.execute('PRAGMA table_info(chats)')}
+            if 'workspace' not in existing:
+                cursor.execute('ALTER TABLE chats ADD COLUMN workspace TEXT')
+
             conn.commit()
+
+    def get_chat_by_id(self, chat_id):
+        with self._get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM chats WHERE id = ?', (chat_id,))
+            result = cursor.fetchone()
+            return dict(result) if result else None
+
+    def set_workspace(self, chat_id, workspace):
+        """None puts the chat back on the default folder."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                'UPDATE chats SET workspace = ? WHERE id = ?', (workspace, chat_id))
+            updated = cursor.rowcount
+            conn.commit()
+        return updated > 0
 
     def get_all_chats_by_user_id(self, id):
         with self._get_connection() as conn:

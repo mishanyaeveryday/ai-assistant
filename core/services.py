@@ -1,6 +1,7 @@
 import bcrypt
 from datetime import datetime
-from config.settings import BUILTIN_MCP_SERVERS
+from pathlib import Path
+from config.settings import BUILTIN_MCP_SERVERS, WORKSPACE_DIR
 from core.crypto import SecretBox, referenced_names, scrub, secret_ref, substitute
 from core.models import User, Chat, MessageHistory, MCPServer
 from db.database import User_DB, Chat_DB, MessageHistory_DB, MCPServer_DB, Secret_DB
@@ -66,6 +67,40 @@ class ChatService:
 
     def delete_chat(self, chat_id: str) -> bool:
         return self.chat_db.delete_chat(chat_id=chat_id)
+
+    def get_chat(self, chat_id: str) -> Chat | None:
+        row = self.chat_db.get_chat_by_id(chat_id=chat_id)
+        return Chat.from_db_row(row) if row else None
+
+    @staticmethod
+    def default_workspace() -> str:
+        return str(Path(WORKSPACE_DIR).expanduser().resolve())
+
+    def get_workspace(self, chat_id: str) -> str:
+        """The folder this chat's tools work in."""
+        chat = self.get_chat(chat_id)
+        if chat is not None and chat.workspace:
+            return chat.workspace
+        # The default is the app's own folder, so it is made on first use; a
+        # folder the user picked is never recreated.
+        default = self.default_workspace()
+        Path(default).mkdir(parents=True, exist_ok=True)
+        return default
+
+    def is_default_workspace(self, chat_id: str) -> bool:
+        chat = self.get_chat(chat_id)
+        return chat is None or not chat.workspace
+
+    def set_workspace(self, chat_id: str, folder: str | None) -> bool:
+        """Picks the folder the chat's tools work in; None goes back to the
+        default. The default itself is stored as None too, so the chat keeps
+        following WORKSPACE_DIR if that is changed later."""
+        if folder is not None:
+            path = Path(folder).expanduser().resolve()
+            if not path.is_dir():
+                raise ValueError(f"{path} is not a folder.")
+            folder = None if str(path) == self.default_workspace() else str(path)
+        return self.chat_db.set_workspace(chat_id=chat_id, workspace=folder)
 
 
 class SecretService:

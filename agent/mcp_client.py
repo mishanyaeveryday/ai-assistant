@@ -6,12 +6,17 @@ is never aware that servers can be up or down - which connection owns a tool
 is decided here, from the tool's name.
 
 Connections that have not been used for a while are shut down again.
+
+Every connection is told which folder to work in through MCP roots: the
+workspace of the chat whose task is running. It is asked for on each call, so
+one running server serves every chat.
 """
 import asyncio
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
-from mcp import ClientSession, StdioServerParameters
+from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
@@ -47,8 +52,9 @@ class _Connection:
     cancel-scope error.
     """
 
-    def __init__(self, spec: ConnectionSpec):
+    def __init__(self, spec: ConnectionSpec, list_roots=None):
         self.spec = spec
+        self._list_roots = list_roots
         self.session: ClientSession | None = None
         self.last_used = time.monotonic()
         self.error: BaseException | None = None
@@ -79,7 +85,8 @@ class _Connection:
         try:
             async with self._open() as streams:
                 read, write = streams[0], streams[1]
-                async with ClientSession(read, write) as session:
+                async with ClientSession(
+                        read, write, list_roots_callback=self._list_roots) as session:
                     await session.initialize()
                     self.session = session
                     self._ready.set()
@@ -130,6 +137,33 @@ class MCPClient:
         self.idle_timeout = idle_timeout
         self._connections: dict[str, _Connection] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        # The folder of the chat whose task is running. One task runs at a
+        # time, so a single value is enough. None sends no roots, and the
+        # servers fall back to WORKSPACE_DIR.
+        self.workspace: str | None = None
+
+    async def _list_roots(self, context) -> types.ListRootsResult:
+        if not self.workspace:
+            return types.ListRootsResult(roots=[])
+        path = Path(self.workspace)
+        return types.ListRootsResult(
+            roots=[types.Root(uri=path.as_uri(), name=path.name)])
+
+    async def set_workspace(self, path: str | None):
+        """Points every server at another folder. The built-in servers ask
+        for it on each call anyway; the notice is for servers that keep their
+        roots once they have them."""
+        if path == self.workspace:
+            return
+        self.workspace = path
+        for connection in list(self._connections.values()):
+            if not connection.is_running:
+                continue
+            try:
+                await connection.session.send_roots_list_changed()
+            except Exception as e:
+                print(f"[MCP] Could not tell {connection.spec.name} "
+                      f"about the new workspace: {e}")
 
     def _lock_for(self, server_id: str) -> asyncio.Lock:
         # Two calls landing on the same cold server must not start it twice.
@@ -147,7 +181,7 @@ class MCPClient:
             if connection is not None and connection.is_running:
                 return connection
 
-            connection = _Connection(spec)
+            connection = _Connection(spec, list_roots=self._list_roots)
             try:
                 await connection.start()
             except BaseException:

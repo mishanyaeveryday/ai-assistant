@@ -25,6 +25,7 @@ class AIWorker(QObject):
         mcp_registry,
         approve_tool: ApproveToolFn | None,
         tools_approval_policy: ToolsApprovalPolicy | None = None,
+        workspace: str | None = None,
     ):
         super().__init__()
         self._model = model
@@ -33,6 +34,9 @@ class AIWorker(QObject):
         self.mcp_registry = mcp_registry
         self.approve_tool = approve_tool
         self.tools_approval_policy = tools_approval_policy
+        # Taken when the task starts: picking another folder for the chat
+        # mid-task must not move the files it is working on.
+        self.workspace = workspace
 
     async def run(self):
         message_id = None
@@ -45,10 +49,16 @@ class AIWorker(QObject):
                 memory=memory,
                 approve_tool=self.approve_tool,
                 tools_approval_policy=self.tools_approval_policy or ToolsApprovalPolicy(),
+                workspace=self.workspace,
             )
 
             message_id = self._model.record_input(
                 self.user_input, chat_id=self.chat_id)
+            # Before the first tool call, so every server works in this
+            # chat's folder rather than the previous task's. After the prompt
+            # is recorded: telling running servers can be awaited, and a Stop
+            # landing there must still leave the prompt in the history.
+            await self.mcp_registry.set_workspace(self.workspace)
             answer = await ai_client.ask(self.user_input)
             self._model.record_output(
                 id=message_id, output=answer, chat_id=self.chat_id)

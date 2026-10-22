@@ -1,5 +1,6 @@
 import json
 from datetime import datetime
+from pathlib import Path
 
 from config.settings import (LLM_FALLBACK_MODELS, LLM_MODEL, MAX_TOOL_ROUNDS, OPENROUTER_API_KEY,
                              OPENROUTER_BASE_URL)
@@ -24,6 +25,39 @@ def date_context(now: datetime) -> str:
         f"{now.year} unless the user asked about another one.")
 
 
+# How many entries of the workspace folder the model is shown up front; past
+# that it can still call list_dir.
+WORKSPACE_LISTING_LIMIT = 50
+
+
+def workspace_context(workspace: str) -> str:
+    """Where this chat's tools work, and what is there at the top - so "sum
+    up the report" can find the file without a listing first. File contents
+    are left out: the model reads what it needs."""
+    path = Path(workspace)
+    lines = [
+        f"Workspace folder of this chat: {path}",
+        "Relative paths in the file tools, the working directory of terminal commands and "
+        "/workspace in the Python sandbox all point to this folder. Other folders can still be "
+        "reached with absolute paths or ~, except from the Python sandbox, which only sees this one.",
+    ]
+    try:
+        entries = [p for p in path.iterdir() if not p.name.startswith(".")]
+    except OSError:
+        lines.append("The folder cannot be read right now - it may have been moved or deleted.")
+        return "\n".join(lines)
+
+    entries.sort(key=lambda p: p.name.lower())
+    shown = [p.name + ("/" if p.is_dir() else "") for p in entries[:WORKSPACE_LISTING_LIMIT]]
+    if not shown:
+        lines.append("The folder is empty.")
+    else:
+        more = len(entries) - len(shown)
+        lines.append("Its top level: " + ", ".join(shown)
+                     + (f" (and {more} more)" if more else ""))
+    return "\n".join(lines)
+
+
 class AIClient:
     def __init__(
         self,
@@ -32,6 +66,7 @@ class AIClient:
         tools_approval_policy: ToolsApprovalPolicy | None = None,
         approve_tool: ApproveToolFn | None = None,
         model=LLM_MODEL,
+        workspace: str | None = None,
     ):
         self.llm = LLMClient(
             llm_model=model,
@@ -46,8 +81,12 @@ class AIClient:
             approve_tool=approve_tool,
         )
         self.memory = memory
-        # Built per prompt (a client is made for each one), so the date is current.
-        self.system_prompt = date_context(datetime.now().astimezone()) + "\n\n" + str(
+        # Built per prompt (a client is made for each one), so the date and
+        # the workspace listing are current.
+        context = date_context(datetime.now().astimezone())
+        if workspace:
+            context += "\n\n" + workspace_context(workspace)
+        self.system_prompt = context + "\n\n" + str(
             """You are an AI assistant that manages files, runs terminal commands, and searches the web on the user's computer using connected tools.
 
 Rules for calling tools:

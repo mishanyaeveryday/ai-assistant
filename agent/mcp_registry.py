@@ -20,6 +20,11 @@ class MCPRegistry:
         self.user_id = user_id
         self._owners = {}
 
+    async def set_workspace(self, path: str | None):
+        """The folder tool calls work in from now on - set by each task to
+        the workspace of its chat."""
+        await self._client.set_workspace(path)
+
     async def get_tools(self):
         """The tool specs to offer the model, refreshed from the cache."""
         if not self.user_id:

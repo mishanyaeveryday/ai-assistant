@@ -83,7 +83,8 @@ async def main():
     login_controller = LoginController(model=auth_model, view=login_view)
     message_controller = MessageController(model=message_model, view=main_view)
     ai_controller = AIClientController(
-        model=ai_model, view=main_view, mcp_registry=mcp_registry)
+        model=ai_model, view=main_view, mcp_registry=mcp_registry,
+        chat_model=chat_model)
 
     main_window_controller = None
     mcp_servers_controller = None

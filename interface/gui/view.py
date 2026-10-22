@@ -8,7 +8,8 @@ import shiboken6
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout,
                                QPushButton, QLabel, QLineEdit, QFormLayout, QHBoxLayout, QFrame, QScrollArea,
                                QButtonGroup, QGraphicsDropShadowEffect, QPlainTextEdit, QStackedWidget,
-                               QMessageBox, QInputDialog, QDialog, QRadioButton, QSizePolicy)
+                               QMessageBox, QInputDialog, QDialog, QRadioButton, QSizePolicy,
+                               QFileDialog)
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtCore import Qt, Signal, QTimer, QEvent
 
@@ -303,6 +304,37 @@ class PromptInput(QPlainTextEdit):
             Qt.ScrollBarPolicy.ScrollBarAsNeeded if overflowing
             else Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setFixedHeight(self.height_for_lines(min(max(lines, 1), self._MAX_VISIBLE_LINES)))
+
+
+class ElidedPathLabel(QLabel):
+    """A path cut short from the left when it does not fit, so the folder's
+    own name stays readable; the full path is in the tooltip. A plain label
+    would instead widen the whole chat panel to fit a long path."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._full_text = ""
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
+    def set_path(self, text: str):
+        self._full_text = text
+        self.setToolTip(text)
+        self._elide()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._elide()
+
+    def _elide(self):
+        self.setText(self.fontMetrics().elidedText(
+            self._full_text, Qt.TextElideMode.ElideLeft, self.width()))
+
+
+def _display_path(path: str) -> str:
+    home = str(Path.home())
+    if path == home or path.startswith(home + "/"):
+        return "~" + path[len(home):]
+    return path
 
 
 def apply_card_shadow(widget):
@@ -709,6 +741,8 @@ class ChatPage(QWidget):
     # A chat was (re)built from history; whatever a running task holds that
     # history doesn't - its approval cards - has to be added back.
     chat_shown = Signal(str)
+    # (chat id, folder) - an empty folder puts the chat back on the default.
+    workspace_change_requested = Signal(str, str)
 
     def __init__(self):
         super().__init__()
@@ -779,6 +813,10 @@ class ChatPage(QWidget):
         self.stop_button = None
         self.busy_hint_label = None
         self.thinking_label = None
+        self.workspace_label = None
+        self.workspace_change_button = None
+        self.workspace_reset_button = None
+        self._workspace_path = None
         self.current_chat_id = None
 
         # Kept here rather than on the chat's widgets, which are rebuilt
@@ -814,6 +852,10 @@ class ChatPage(QWidget):
         self.stop_button = None
         self.busy_hint_label = None
         self.thinking_label = None
+        self.workspace_label = None
+        self.workspace_change_button = None
+        self.workspace_reset_button = None
+        self._workspace_path = None
         self._approval_bubbles = []
 
     def clear_chat_view(self):
@@ -882,6 +924,7 @@ class ChatPage(QWidget):
         bottom_layout.setContentsMargins(_CHAT_MARGIN, 0, _CHAT_MARGIN, _CHAT_MARGIN)
         bottom_layout.setSpacing(4)
         bottom_layout.addWidget(self.busy_hint_label)
+        bottom_layout.addWidget(self._build_workspace_bar())
         input_row = QHBoxLayout()
         input_row.setSpacing(8)
         input_row.addWidget(self.message_input, 1)
@@ -900,6 +943,58 @@ class ChatPage(QWidget):
         self.scroll_to_bottom()
         self.message_input.setFocus()
         self.chat_shown.emit(chat_id)
+
+    def _build_workspace_bar(self) -> QWidget:
+        """The folder the open chat's tools work in, just above the message
+        box. A widget of its own for the same reason as the input row: the
+        panel is torn down widget by widget."""
+        bar = QFrame()
+        bar.setObjectName("workspace_bar")
+        bar.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(10, 4, 4, 4)
+        layout.setSpacing(6)
+
+        title = QLabel("Workspace:")
+        title.setObjectName("hint_text")
+        # Filled in by show_workspace once the controller has looked it up.
+        self.workspace_label = ElidedPathLabel()
+        self.workspace_label.setObjectName("workspace_path")
+        self.workspace_change_button = QPushButton("Change…")
+        self.workspace_change_button.setObjectName("workspace_button")
+        self.workspace_change_button.clicked.connect(self._pick_workspace)
+        self.workspace_reset_button = QPushButton("Use default")
+        self.workspace_reset_button.setObjectName("workspace_button")
+        self.workspace_reset_button.setToolTip("Work in the default workspace folder again")
+        self.workspace_reset_button.clicked.connect(
+            lambda: self.workspace_change_requested.emit(self.current_chat_id, ""))
+        self.workspace_reset_button.hide()
+
+        layout.addWidget(title)
+        layout.addWidget(self.workspace_label, 1)
+        layout.addWidget(self.workspace_reset_button)
+        layout.addWidget(self.workspace_change_button)
+        return bar
+
+    def show_workspace(self, chat_id: str, path: str, is_default: bool):
+        if chat_id != self.current_chat_id or self.workspace_label is None:
+            return
+        self._workspace_path = path
+        shown = _display_path(path)
+        self.workspace_label.set_path(f"{shown} (default)" if is_default else shown)
+        self.workspace_reset_button.setVisible(not is_default)
+
+    def _pick_workspace(self):
+        chat_id = self.current_chat_id
+        if chat_id is None:
+            return
+        folder = QFileDialog.getExistingDirectory(
+            self, "Workspace folder for this chat", self._workspace_path or str(Path.home()))
+        if folder:
+            self.workspace_change_requested.emit(chat_id, folder)
+
+    def show_workspace_error(self, text: str):
+        QMessageBox.warning(self, "Workspace", text)
 
     def set_busy_chat(self, chat_id: str | None):
         """Which chat has a task running, if any. Only one runs at a time, so
@@ -924,6 +1019,10 @@ class ChatPage(QWidget):
 
         self.send_button.setVisible(not busy_here)
         self.stop_button.setVisible(busy_here)
+        # The running task keeps the folder it started with; changing it
+        # here would only make the bar disagree with what the task works on.
+        self.workspace_change_button.setEnabled(not busy_here)
+        self.workspace_reset_button.setEnabled(not busy_here)
         has_text = bool(self.message_input.toPlainText().strip())
         self.send_button.setEnabled(has_text and self._busy_chat_id is None)
 

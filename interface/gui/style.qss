@@ -172,6 +172,40 @@ QPushButton#stop_button:pressed {
     background-color: #b71c1c;
 }
 
+/* Folder of the open chat, just above the message box */
+QFrame#workspace_bar {
+    background-color: #ffffff;
+    border: 1px solid #e5e7ec;
+    border-radius: 8px;
+}
+
+QLabel#workspace_path {
+    color: #4a5060;
+    font-size: 13px;
+}
+
+QPushButton#workspace_button {
+    background-color: #eceef4;
+    color: #4a5060;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 12px;
+}
+
+QPushButton#workspace_button:hover {
+    background-color: #dde0ea;
+    color: #1f2430;
+}
+
+QPushButton#workspace_button:pressed {
+    background-color: #cdd2e0;
+}
+
+QPushButton#workspace_button:disabled {
+    background-color: #eceef4;
+    color: #a9aeb9;
+}
+
 /* Lined up with the text of the chat cells */
 QLabel#thinking_text {
     color: #8a8f98;

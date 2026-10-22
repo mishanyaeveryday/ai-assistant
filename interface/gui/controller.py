@@ -121,6 +121,8 @@ class MainWindowController(QObject):
 
         self._view.new_chat_requested.connect(self.handle_create_new_chat)
         self._view.chat_delete_requested.connect(self.handle_delete_chat)
+        self._view.chat_shown.connect(self.show_workspace)
+        self._view.workspace_change_requested.connect(self.handle_workspace_change)
 
     def disconnect_view(self):
         """A fresh controller is built on every login, so the previous one has
@@ -128,6 +130,8 @@ class MainWindowController(QObject):
         would handle each action twice."""
         self._view.new_chat_requested.disconnect(self.handle_create_new_chat)
         self._view.chat_delete_requested.disconnect(self.handle_delete_chat)
+        self._view.chat_shown.disconnect(self.show_workspace)
+        self._view.workspace_change_requested.disconnect(self.handle_workspace_change)
 
     def update_chat_list_in_view(self):
         chat_objects = self._model.get_all_user_chats(user_id=self._user.id)
@@ -150,6 +154,21 @@ class MainWindowController(QObject):
             self._view.clear_chat_view()
 
         self.update_chat_list_in_view()
+
+    def show_workspace(self, chat_id: str):
+        self._view.show_workspace(
+            chat_id,
+            self._model.get_workspace(chat_id),
+            self._model.is_default_workspace(chat_id))
+
+    def handle_workspace_change(self, chat_id: str, folder: str):
+        """An empty folder puts the chat back on the default one."""
+        try:
+            self._model.set_workspace(chat_id, folder or None)
+        except ValueError as e:
+            self._view.show_workspace_error(str(e))
+            return
+        self.show_workspace(chat_id)
 
 
 class MessageController(QObject):
@@ -178,11 +197,15 @@ class AIClientController(QObject):
     from and keeps running while other chats are opened: its answer goes to
     that chat only, and its approval cards come back when it is reopened."""
 
-    def __init__(self, model: AIClientService, view: ChatPage, mcp_registry):
+    def __init__(self, model: AIClientService, view: ChatPage, mcp_registry,
+                 chat_model: ChatService | None = None):
         super().__init__()
         self._model = model
         self._view = view
         self._mcp_registry = mcp_registry
+        # Looks up each chat's workspace folder; without it every task works
+        # in the default one.
+        self._chat_model = chat_model
         self._tool_approval = HumanToolApproval(view=self._view)
         self._approval_policy = ToolsApprovalPolicy()
         # Kept so the task can be stopped; asyncio itself only holds a weak
@@ -214,6 +237,8 @@ class AIClientController(QObject):
             mcp_registry=self._mcp_registry,
             approve_tool=self._tool_approval.for_chat(chat_id),
             tools_approval_policy=self._approval_policy,
+            workspace=(self._chat_model.get_workspace(chat_id)
+                       if self._chat_model is not None else None),
         )
 
         self.worker.finished.connect(

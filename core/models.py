@@ -45,11 +45,13 @@ class User:
 
 
 class Chat:
-    def __init__(self, id, title, user_id, created_at):
+    def __init__(self, id, title, user_id, created_at, workspace=None):
         self.id = id
         self.title = title
         self.user_id = user_id
         self.created_at = created_at
+        # The folder picked for this chat, or None for the default one.
+        self.workspace = workspace
 
     @classmethod
     def from_db_row(cls, row: dict):
@@ -57,7 +59,8 @@ class Chat:
             id=row['id'],
             title=row['title'],
             user_id=row['user_id'],
-            created_at=row['created_at']
+            created_at=row['created_at'],
+            workspace=row.get('workspace')
         )
 
 

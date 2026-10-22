@@ -8,19 +8,21 @@ from functools import cache
 from typing import Annotated
 from PIL import ImageGrab
 from pathlib import Path
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 import openai
 from openai import AsyncOpenAI
 
 try:
-    from config.settings import (SCREENSHOT_DIR, WORKSPACE_DIR, OPENROUTER_API_KEY,
+    from config.settings import (SCREENSHOT_DIR, OPENROUTER_API_KEY,
                                  OPENROUTER_BASE_URL, VISION_MODEL)
+    from mcp_tools.workspace import resolve_workspace
 except ImportError:
     current_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(current_dir, "..", ".."))
     sys.path.insert(0, project_root)
-    from config.settings import (SCREENSHOT_DIR, WORKSPACE_DIR, OPENROUTER_API_KEY,
+    from config.settings import (SCREENSHOT_DIR, OPENROUTER_API_KEY,
                                  OPENROUTER_BASE_URL, VISION_MODEL)
+    from mcp_tools.workspace import resolve_workspace
 
 mcp = FastMCP("screenshot")
 
@@ -38,17 +40,16 @@ def _llm() -> AsyncOpenAI:
 WORKSPACE = Path(SCREENSHOT_DIR).resolve()
 WORKSPACE.mkdir(parents=True, exist_ok=True)
 
-FILES_WORKSPACE = Path(WORKSPACE_DIR).resolve()
-
 
 def _resolve(path: str) -> Path:
     p = (WORKSPACE / path).resolve()
     return p
 
 
-def _resolve_image(path: str) -> Path:
+async def _resolve_image(ctx: Context | None, path: str) -> Path:
     """Resolve an image path: absolute paths are used as-is; relative
-    ones are looked up in the screenshot dir first, then the workspace dir."""
+    ones are looked up in the screenshot dir first, then the chat's
+    workspace folder."""
     p = Path(path).expanduser()
     if p.is_absolute():
         return p.resolve()
@@ -57,7 +58,7 @@ def _resolve_image(path: str) -> Path:
     if candidate.exists():
         return candidate
 
-    return (FILES_WORKSPACE / p).resolve()
+    return (await resolve_workspace(ctx) / p).resolve()
 
 
 @mcp.tool()
@@ -85,14 +86,15 @@ async def read_image(
                         "Leave empty to capture and look at the current screen instead."] = "",
     question: Annotated[str,
                         "What to do with the image, e.g. 'extract the visible text', 'describe what's "
-                        "shown', 'what error is displayed'. Defaults to a general description plus any text."] = ""
+                        "shown', 'what error is displayed'. Defaults to a general description plus any text."] = "",
+    ctx: Context = None,
 ) -> str:
     '''Have the AI model look at an image directly (no OCR) and answer a question about it, or describe
     it and read out any visible text by default. Pass no filename to capture and look at the current
     screen; pass a filename (e.g. one made by make_screenshot) to look at that instead. Not just for
     text — use it to describe UI, diagrams, photos, whatever the user points to.'''
     if filename:
-        p = _resolve_image(filename)
+        p = await _resolve_image(ctx, filename)
         if not p.exists():
             return f"File not found: {filename}"
         image_bytes = p.read_bytes()

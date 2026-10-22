@@ -232,7 +232,17 @@ Za każdym wywołaniem `run_python_code`:
 1. Kod dostarczony przez asystenta jest zapisywany do **tymczasowego katalogu** (`tempfile.TemporaryDirectory`), tworzonego na czas jednego uruchomienia.
 2. Ten katalog jest montowany do kontenera jako `/sandbox`, a kontener uruchamia `python /sandbox/main.py`.
 3. Po zakończeniu wykonania kontener jest usuwany (`remove=True`), a tymczasowy katalog na hoście jest kasowany automatycznie po wyjściu z bloku `with` — **sam kod nie zostaje zapisany nigdzie na stałe w repo ani na dysku**.
-4. Dodatkowo katalog z **`WORKSPACE_DIR`** (patrz zmienna w `.env`, domyślnie `~/ai-assistant-workspace`) jest montowany do kontenera jako `/workspace`. Jeśli kod ma wygenerować plik, który ma **przetrwać** po zakończeniu (raport, wykres, wygenerowane dane), powinien zapisać go pod ścieżką `/workspace/...` wewnątrz kontenera — wtedy plik ląduje trwale w `WORKSPACE_DIR` na hoście. Wszystko zapisane gdzie indziej (np. w bieżącym katalogu `/sandbox`) jest traktowane jako dane tymczasowe i znika razem z kontenerem.
+4. Dodatkowo folder roboczy czatu (patrz **[Folder roboczy czatu](#folder-roboczy-czatu-workspace)**) jest montowany do kontenera jako `/workspace`. Jeśli kod ma wygenerować plik, który ma **przetrwać** po zakończeniu (raport, wykres, wygenerowane dane), powinien zapisać go pod ścieżką `/workspace/...` wewnątrz kontenera — wtedy plik ląduje trwale w tym folderze na hoście. Wszystko zapisane gdzie indziej (np. w bieżącym katalogu `/sandbox`) jest traktowane jako dane tymczasowe i znika razem z kontenerem. Innych folderów hosta sandbox nie widzi.
+
+#### Folder roboczy czatu (workspace)
+
+Każdy czat ma swój folder roboczy — pokazany nad wiadomościami, zmieniany przyciskiem **Change…** (powrót: **Use default**). Domyślnie jest to **`WORKSPACE_DIR`** z `.env` (`~/ai-assistant-workspace`). W tym folderze:
+
+- narzędzia plikowe rozwiązują ścieżki względne (ścieżki absolutne i `~` nadal działają wszędzie),
+- `terminal_command` uruchamia polecenia,
+- `run_python_code` montuje go jako `/workspace`.
+
+Model dostaje w prompcie ścieżkę folderu i listę jego najwyższego poziomu (same nazwy, bez zawartości plików). Folder trafia do serwerów MCP jako *root* protokołu MCP, więc serwery dodane przez użytkownika, które obsługują roots (np. oficjalny serwer filesystem), też pracują w folderze czatu.
 
 Uwaga: to inny mechanizm niż starszy `tools/code_interpreter.py` / `DockerCodeInterpreter`, który zapisywał wykonywany skrypt na stałe do katalogu `tools/files/` na hoście. `tools/code_interpreter.py` jest zachowany w repo (ma własne testy), ale **nie jest** podpięty do `main.py` / GUI — aktualnym, używanym w aplikacji narzędziem jest `mcp_tools/code_interpreter/server.py`.
 
@@ -267,7 +277,8 @@ ai-assistant/
 │   └── gui/                # PySide6: okna, kontrolery, worker AI
 ├── mcp_tools/
 │   ├── web_search/          # serwer MCP z narzędziem Tavily
-│   ├── filesystem_command/  # odczyt/zapis plików w WORKSPACE_DIR
+│   ├── workspace.py         # folder roboczy czatu (MCP roots) dla serwerów
+│   ├── filesystem_command/  # odczyt/zapis plików w folderze roboczym czatu
 │   ├── terminal_command/    # wykonywanie poleceń shell
 │   ├── screenshot_command/  # zrzuty ekranu
 │   ├── input_control/       # sterowanie myszą/klawiaturą

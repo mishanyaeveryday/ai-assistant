@@ -72,7 +72,7 @@ class FakeWorker(QObject):
     started = []
 
     def __init__(self, model, chat_id, user_input, mcp_registry, approve_tool,
-                 tools_approval_policy=None):
+                 tools_approval_policy=None, workspace=None):
         super().__init__()
         self.chat_id = chat_id
         self.approve_tool = approve_tool
@@ -245,8 +245,12 @@ def test_stopped_worker_records_the_stop():
         async def ask(self, prompt):
             await asyncio.Event().wait()
 
+    class Registry:
+        async def set_workspace(self, path):
+            pass
+
     model = Model()
-    worker = AIWorker(model, "A", "hi", mcp_registry=None, approve_tool=None)
+    worker = AIWorker(model, "A", "hi", mcp_registry=Registry(), approve_tool=None)
     stopped = []
     worker.stopped.connect(lambda: stopped.append(True))
 
