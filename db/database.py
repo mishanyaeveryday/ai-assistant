@@ -10,7 +10,7 @@ MCP_SERVER_COLUMNS = frozenset({
     'id', 'user_id', 'name', 'transport', 'command', 'args', 'env',
     'url', 'headers', 'description', 'is_builtin', 'is_enabled', 'created_at',
     'last_status', 'last_error_code', 'last_error', 'last_checked_at',
-    'known_tools', 'auto_approved_tools',
+    'known_tools', 'auto_approved_tools', 'runs_without_asking',
 })
 # Columns added after the table first shipped; create_table backfills them so
 # a database made by an earlier run keeps working.
@@ -21,6 +21,7 @@ MCP_SERVER_ADDED_COLUMNS = (
     ('last_error', 'TEXT'),
     ('last_checked_at', 'TEXT'),
     ('auto_approved_tools', 'TEXT'),
+    ('runs_without_asking', 'INTEGER DEFAULT 0'),
 )
 MCP_SERVER_EDITABLE_COLUMNS = MCP_SERVER_COLUMNS - {'id', 'user_id', 'created_at'}
 MCP_SERVER_JSON_COLUMNS = frozenset({'args', 'env', 'headers', 'known_tools',
@@ -388,6 +389,7 @@ class MCPServer_DB:
                     created_at TEXT,
                     known_tools TEXT,
                     auto_approved_tools TEXT,
+                    runs_without_asking INTEGER DEFAULT 0,
                     last_status TEXT,
                     last_error_code TEXT,
                     last_error TEXT,
@@ -498,7 +500,7 @@ class MCPServer_DB:
             updates.append(f"{column} = ?")
             if column in MCP_SERVER_JSON_COLUMNS and value is not None:
                 value = json.dumps(value)
-            elif column in ('is_builtin', 'is_enabled') and value is not None:
+            elif column in ('is_builtin', 'is_enabled', 'runs_without_asking') and value is not None:
                 value = int(value)
             values.append(value)
         values.append(server_id)

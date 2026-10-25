@@ -51,7 +51,7 @@ class MCPRegistry:
         if owner is None:
             return False
         server = self._service.get_server(owner.id)
-        return server is not None and tool_name in server.auto_approved_tools
+        return server is not None and server.allows_without_asking(tool_name)
 
     async def stop_server(self, server_id: str) -> bool:
         """Shuts down a server that was switched off or removed in settings.

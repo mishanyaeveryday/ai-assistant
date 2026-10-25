@@ -353,7 +353,14 @@ QCheckBox#auto_approve_check {
     spacing: 0px;
 }
 
-QCheckBox#auto_approve_check::indicator {
+QCheckBox#consent_check {
+    background: transparent;
+    spacing: 8px;
+    font-weight: 600;
+}
+
+QCheckBox#auto_approve_check::indicator,
+QCheckBox#consent_check::indicator {
     width: 16px;
     height: 16px;
     border: 1px solid #c8ccd6;
@@ -361,17 +368,25 @@ QCheckBox#auto_approve_check::indicator {
     background-color: #ffffff;
 }
 
-QCheckBox#auto_approve_check::indicator:hover {
+QCheckBox#auto_approve_check::indicator:hover,
+QCheckBox#consent_check::indicator:hover {
     border-color: #3d5afe;
 }
 
-QCheckBox#auto_approve_check::indicator:checked {
+QCheckBox#auto_approve_check::indicator:checked,
+QCheckBox#consent_check::indicator:checked {
     border-color: #3d5afe;
     background-color: #3d5afe;
     image: url(icons:check.svg);
 }
 
-QCheckBox#auto_approve_check::indicator:checked:disabled {
+QCheckBox#auto_approve_check::indicator:disabled {
+    border-color: #dcdfe6;
+    background-color: #f0f1f4;
+}
+
+QCheckBox#auto_approve_check::indicator:checked:disabled,
+QCheckBox#consent_check::indicator:checked:disabled {
     border-color: #b8c1f7;
     background-color: #b8c1f7;
 }

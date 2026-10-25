@@ -1,7 +1,7 @@
 from PySide6.QtCore import Signal, QObject
 from core.models import User, MCPServer
-from interface.gui.view import RegistrationPage, LoginPage, ChatPage, SettingsPage, AppWindow, MCPServersSection
-from core.services import AuthService, ChatService, MessageService, AIClientService, MCPServerService
+from interface.gui.view import RegistrationPage, LoginPage, ChatPage, SettingsPage, AppWindow, MCPServersSection, ScreenControlSection
+from core.services import AuthService, ChatService, MessageService, AIClientService, MCPServerService, is_screen_control, needs_consent
 from interface.gui.worker import AIWorker, STOPPED_OUTPUT
 from interface.gui.mcp_tools_approval import HumanToolApproval
 from agent.tools_policy import ToolsApprovalPolicy
@@ -461,13 +461,16 @@ class MCPServersController(QObject):
     """Drives the MCP servers section of settings. Built on every login, like
     MainWindowController, since everything it shows belongs to one user - and
     it also runs the connection checks, so the section can show which servers
-    are being checked right now."""
+    are being checked right now. It also drives the screen-control consent,
+    since what that does is switch two of those servers on or off."""
 
-    def __init__(self, user: User, model: MCPServerService, view: MCPServersSection, mcp_registry):
+    def __init__(self, user: User, model: MCPServerService, view: MCPServersSection, mcp_registry,
+                 screen_view: ScreenControlSection | None = None):
         super().__init__()
         self._user = user
         self._model = model
         self._view = view
+        self._screen_view = screen_view
         self._mcp_registry = mcp_registry
         # Tells which tools ask before running unless the user allowed them -
         # the same rule the chat applies.
@@ -484,6 +487,10 @@ class MCPServersController(QObject):
         self._view.enabled_changed.connect(self.handle_enabled_changed)
         self._view.check_requested.connect(self.handle_check)
         self._view.auto_approve_changed.connect(self.handle_auto_approve_changed)
+        if self._screen_view is not None:
+            self._screen_view.allowed_changed.connect(self.handle_screen_control_changed)
+            self._screen_view.check_requested.connect(self.handle_check)
+            self._screen_view.set_allowed(self._model.is_screen_control_allowed(self._user.id))
 
     def disconnect_view(self):
         """Lets go of the (long-lived) view before the next login builds a new
@@ -496,6 +503,9 @@ class MCPServersController(QObject):
         self._view.enabled_changed.disconnect(self.handle_enabled_changed)
         self._view.check_requested.disconnect(self.handle_check)
         self._view.auto_approve_changed.disconnect(self.handle_auto_approve_changed)
+        if self._screen_view is not None:
+            self._screen_view.allowed_changed.disconnect(self.handle_screen_control_changed)
+            self._screen_view.check_requested.disconnect(self.handle_check)
         for task in list(self._check_tasks):
             task.cancel()
 
@@ -504,9 +514,18 @@ class MCPServersController(QObject):
             return
         servers = self._model.get_user_servers(user_id=self._user.id)
         _, owners = self._model.get_tool_catalogue(user_id=self._user.id)
-        self._view.show_servers([self._row_data(s, owners) for s in servers])
+        rows = [self._row_data(s, owners) for s in servers]
+        if self._screen_view is None:
+            self._view.show_servers(rows)
+            return
+        # The screen-control servers are listed under their consent box
+        # instead of with the rest.
+        self._view.show_servers([row for row in rows if not row['screen_control']])
+        self._screen_view.show_servers([row for row in rows if row['screen_control']])
+        self._screen_view.set_allowed(self._model.is_screen_control_allowed(self._user.id))
 
     def _tool_list(self, server: MCPServer, owners: dict) -> list[dict]:
+        screen_control = is_screen_control(server)
         tools = []
         for spec in server.known_tools:
             name = spec.get('name')
@@ -518,7 +537,9 @@ class MCPServersController(QObject):
                 'description': (spec.get('description') or '').strip(),
                 'asks_by_default': self._approval_policy.requires_approval(
                     name, is_builtin=server.is_builtin),
-                'auto_approved': name in server.auto_approved_tools,
+                'auto_approved': server.allows_without_asking(name),
+                # Set for the whole server by the screen-control consent.
+                'locked': screen_control,
                 # The model only ever reaches the first server offering a
                 # name, so this one's setting would change nothing.
                 'shadowed_by': owner.name if owner is not None and owner.id != server.id else None,
@@ -536,6 +557,8 @@ class MCPServersController(QObject):
 
         if server.id in self._checking:
             status = 'checking'
+        elif needs_consent(server):
+            status = 'needs_consent'
         elif server.is_broken:
             status = 'error'
         elif not server.is_enabled:
@@ -551,6 +574,8 @@ class MCPServersController(QObject):
             'transport': server.transport,
             'is_builtin': server.is_builtin,
             'is_enabled': server.is_enabled,
+            # Switched on and off by the screen-control consent, not here.
+            'screen_control': is_screen_control(server),
             'detail': server.description or target,
             'target': target,
             'status': status,
@@ -619,6 +644,24 @@ class MCPServersController(QObject):
             self._start_check(server_id)
         else:
             self.refresh()
+
+    def handle_screen_control_changed(self, allowed: bool):
+        server_ids = self._model.set_screen_control_allowed(self._user.id, allowed)
+        if not allowed:
+            # Left running, they would keep serving the calls of a task
+            # already under way.
+            for server_id in server_ids:
+                self._stop_server(server_id)
+            self.refresh()
+            return
+
+        for server_id in server_ids:
+            server = self._model.get_server(server_id)
+            if server is not None and (server.is_broken or server.last_status is None):
+                # Same as switching on any server: until a check succeeds,
+                # its cached tools may be stale or missing.
+                self._start_check(server_id)
+        self.refresh()
 
     def handle_check(self, server_id: str):
         self._start_check(server_id)

@@ -1,7 +1,7 @@
 import bcrypt
 from datetime import datetime
 from pathlib import Path
-from config.settings import BUILTIN_MCP_SERVERS, WORKSPACE_DIR
+from config.settings import BUILTIN_MCP_SERVERS, SCREEN_CONTROL_SERVERS, WORKSPACE_DIR
 from core.crypto import SecretBox, referenced_names, scrub, secret_ref, substitute
 from core.models import User, Chat, MessageHistory, MCPServer
 from db.database import User_DB, Chat_DB, MessageHistory_DB, MCPServer_DB, Secret_DB
@@ -147,6 +147,17 @@ def server_secret_name(server_name: str, kind: str, key: str) -> str:
     return f"{server_name}.{kind}.{key}"
 
 
+def is_screen_control(server: MCPServer) -> bool:
+    return server.is_builtin and server.name in SCREEN_CONTROL_SERVERS
+
+
+def needs_consent(server: MCPServer) -> bool:
+    """A screen-control server the user has not agreed to yet. Its tools are
+    not offered, whatever its on/off switch says - a database from before the
+    consent existed has these servers switched on."""
+    return is_screen_control(server) and not server.runs_without_asking
+
+
 class MCPServerService:
     def __init__(self, mcp_server_db: MCPServer_DB, secret_service: SecretService = None):
         self.mcp_server_db = mcp_server_db
@@ -264,6 +275,24 @@ class MCPServerService:
         return self.mcp_server_db.update_server(
             server_id, auto_approved_tools=sorted(names))
 
+    def screen_control_servers(self, user_id: str) -> list[MCPServer]:
+        return [s for s in self.get_user_servers(user_id) if is_screen_control(s)]
+
+    def is_screen_control_allowed(self, user_id: str) -> bool:
+        servers = self.screen_control_servers(user_id)
+        return bool(servers) and all(s.runs_without_asking for s in servers)
+
+    def set_screen_control_allowed(self, user_id: str, allowed: bool) -> list[str]:
+        """Records the user's consent to screen control, or takes it back:
+        the screen-control servers are switched on with every tool running
+        without asking, or switched off. Returns their ids."""
+        server_ids = []
+        for server in self.screen_control_servers(user_id):
+            self.mcp_server_db.update_server(
+                server.id, runs_without_asking=allowed, is_enabled=allowed)
+            server_ids.append(server.id)
+        return server_ids
+
     def delete_server(self, server_id: str) -> bool:
         """Removes the server along with the secrets created for it."""
         server = self.get_server(server_id)
@@ -350,6 +379,8 @@ class MCPServerService:
         specs = []
         owners = {}
         for server in self.get_enabled_servers(user_id):
+            if needs_consent(server):
+                continue
             for spec in server.known_tools:
                 name = spec.get('name')
                 if not name or name in owners:

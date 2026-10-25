@@ -78,7 +78,8 @@ class MCPServer:
     def __init__(self, id, user_id, name, transport, command, args, env,
                  url, headers, description, is_builtin, is_enabled, created_at,
                  last_status=None, last_error_code=None, last_error=None,
-                 last_checked_at=None, known_tools=None, auto_approved_tools=None):
+                 last_checked_at=None, known_tools=None, auto_approved_tools=None,
+                 runs_without_asking=False):
         self.id = id
         self.user_id = user_id
         self.name = name
@@ -101,6 +102,12 @@ class MCPServer:
         self.known_tools = known_tools or []
         # Names of this server's tools the user lets run without asking.
         self.auto_approved_tools = auto_approved_tools or []
+        # Every tool of this server runs without asking. Set only by the
+        # user's consent to screen control - see MCPServerService.
+        self.runs_without_asking = runs_without_asking
+
+    def allows_without_asking(self, tool_name: str) -> bool:
+        return self.runs_without_asking or tool_name in self.auto_approved_tools
 
     @property
     def is_broken(self) -> bool:
@@ -128,7 +135,8 @@ class MCPServer:
             last_error=row.get('last_error'),
             last_checked_at=row.get('last_checked_at'),
             known_tools=_decode_json(row.get('known_tools'), []),
-            auto_approved_tools=_decode_json(row.get('auto_approved_tools'), [])
+            auto_approved_tools=_decode_json(row.get('auto_approved_tools'), []),
+            runs_without_asking=bool(row.get('runs_without_asking')),
         )
 
 

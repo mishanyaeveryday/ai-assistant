@@ -33,7 +33,8 @@ LLM_MODEL = os.getenv('LLM_MODEL', "google/gemini-3.8-flash")
 LLM_FALLBACK_MODELS = [m.strip() for m in os.getenv('LLM_FALLBACK_MODELS', '').split(',')
                        if m.strip()]
 
-# Looks at images and screenshots for read_image; it must accept image input.
+# Looks at images and screenshots for read_image and find_on_screen; it must
+# accept image input.
 VISION_MODEL = os.getenv('VISION_MODEL', "google/gemini-3.8-flash")
 
 # The MCP servers that ship with the app. They are seeded into the
@@ -61,9 +62,15 @@ BUILTIN_MCP_SERVERS: tuple[dict, ...] = (
      "description": "Runs Python code"},
 )
 
+# Built-in servers that work the screen, mouse and keyboard. A card in the chat
+# before each step would pull the focus away from the app being worked in, so
+# they cannot ask - they stay off until the user agrees, in Settings, to them
+# running without asking.
+SCREEN_CONTROL_SERVERS: frozenset[str] = frozenset({"screenshot_command", "input_control"})
+
 TOOLS_REQUIRING_APPROVAL: frozenset[str] = frozenset(
     {"terminal_command", "write_file", "delete_file", "append_file", "delete_text", "make_screenshot",
-     "click", "type_text", "run_python_code"})
+     "click", "type_text", "press_keys", "scroll", "run_python_code"})
 
 # How many rounds of tool calls one prompt may take before the model has to
 # answer with what it has. Searching and saving a summary alone takes several.

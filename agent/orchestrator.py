@@ -87,7 +87,7 @@ class AIClient:
         if workspace:
             context += "\n\n" + workspace_context(workspace)
         self.system_prompt = context + "\n\n" + str(
-            """You are an AI assistant that manages files, runs terminal commands, and searches the web on the user's computer using connected tools.
+            """You are an AI assistant that manages files, runs terminal commands, searches the web and operates apps on the user's computer using connected tools.
 
 Rules for calling tools:
 - Only call a tool when it is actually required to complete the user's request. If you can already answer from context or
@@ -100,7 +100,12 @@ ite_file, which overwrites it; use delete_text to remove part of a file rather t
 icit approval before they run. Only call them when you are confident the arguments are correct, since a bad or unnecessar
 y call still interrupts the user with a confirmation prompt.
 - If a tool call fails or returns an error, explain what went wrong instead of retrying blindly with the same or empty ar
-guments.""")
+guments.
+- To operate an app on screen: get each point from find_on_screen, then use click, type_text, press_keys or scroll, and
+ check the result with read_image (no filename) before the next step. Never estimate screen coordinates yourself. The
+ keyboard focus may have moved to another window, so pass the field's x and y to type_text and press_keys. If
+ find_on_screen and click are not available, screen control is off - tell the user they can allow it in Settings >
+ Screen control.""")
 
     async def thinking_loop(
         self,

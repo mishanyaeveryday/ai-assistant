@@ -3,7 +3,7 @@ from core.models import User
 from core.services import AuthService, ChatService, MessageService, AIClientService, MCPServerService, SecretService
 from agent.mcp_registry import MCPRegistry
 
-from interface.gui.view import RegistrationPage, LoginPage, ChatPage, SettingsPage, AppWindow, MCPServersSection
+from interface.gui.view import RegistrationPage, LoginPage, ChatPage, SettingsPage, AppWindow, MCPServersSection, ScreenControlSection
 from interface.gui.controller import RegistrationController, LoginController, MainWindowController, ViewManager, MessageController, AIClientController, MCPServersController
 
 import sys
@@ -62,6 +62,8 @@ async def main():
     settings_view = SettingsPage()
     mcp_servers_view = MCPServersSection()
     settings_view.add_section(mcp_servers_view)
+    screen_control_view = ScreenControlSection()
+    settings_view.add_section(screen_control_view)
 
     view_manager = ViewManager(
         app_window=app_window,
@@ -114,7 +116,7 @@ async def main():
         main_window_controller.update_chat_list_in_view()
         mcp_servers_controller = MCPServersController(
             user=user, model=mcp_server_model, view=mcp_servers_view,
-            mcp_registry=mcp_registry)
+            mcp_registry=mcp_registry, screen_view=screen_control_view)
         view_manager.show_main_window()
 
         # Kicked off after the window is up so a slow or hanging server never

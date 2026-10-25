@@ -439,6 +439,363 @@ def _plain_label(text: str = "") -> QLabel:
     return label
 
 
+class ServerList(QWidget):
+    """Rows of MCP servers, each with its status, buttons and - opened from
+    Tools - its tools. Used by the MCP servers section and, for the servers it
+    governs, by the screen control section."""
+
+    delete_requested = Signal(str)
+    enabled_changed = Signal(str, bool)
+    check_requested = Signal(str)
+    # (server id, tool name, allowed): let the tool run without asking.
+    auto_approve_changed = Signal(str, str, bool)
+
+    # The "Run without asking" column of the tools panel - its heading and
+    # every line's checkbox share the width, so they line up.
+    _CHECK_COLUMN_WIDTH = 150
+
+    _STATUS_COLORS = {
+        'ok': '#2e7d32',
+        'error': '#c62828',
+        'checking': '#3d5afe',
+        'off': '#8a8f98',
+        'unchecked': '#8a8f98',
+        'needs_consent': '#8a8f98',
+    }
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("server_list")
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(8)
+
+        # Every refresh rebuilds the rows - and checks refresh them several
+        # times on login - so which tool lists are open is kept here.
+        self._servers: list[dict] = []
+        self._expanded: set[str] = set()
+
+    def show_servers(self, servers: list[dict]):
+        self._servers = servers
+        while self._layout.count():
+            item = self._layout.takeAt(0)
+            if item.widget() is not None:
+                # Hidden first: until deleteLater gets to it, an old row would
+                # still paint under the new ones - which now differ in height
+                # whenever a tool list is opened or closed.
+                item.widget().hide()
+                item.widget().deleteLater()
+
+        if not servers:
+            empty = QLabel("No servers yet.")
+            empty.setObjectName("placeholder_text")
+            self._layout.addWidget(empty)
+            return
+
+        for server in servers:
+            self._layout.addWidget(self._build_row(server))
+
+    def _build_row(self, server: dict) -> QFrame:
+        server_id = server['id']
+        checking = server['status'] == 'checking'
+        expanded = server_id in self._expanded
+
+        row = QFrame()
+        row.setObjectName("server_row")
+        outer_layout = QVBoxLayout(row)
+        outer_layout.setContentsMargins(12, 10, 12, 10)
+        outer_layout.setSpacing(10)
+        row_layout = QHBoxLayout()
+        row_layout.setSpacing(10)
+        outer_layout.addLayout(row_layout)
+
+        info = QVBoxLayout()
+        info.setSpacing(2)
+
+        title_line = QHBoxLayout()
+        title_line.setSpacing(6)
+        name = _plain_label(server['name'])
+        name.setObjectName("server_name")
+        title_line.addWidget(name)
+        tags = [server['transport']] + (['built-in'] if server['is_builtin'] else [])
+        for tag in tags:
+            tag_label = QLabel(tag)
+            tag_label.setObjectName("server_tag")
+            title_line.addWidget(tag_label)
+        title_line.addStretch(1)
+        info.addLayout(title_line)
+
+        if server['detail']:
+            detail = _plain_label(server['detail'])
+            detail.setObjectName("hint_text")
+            detail.setToolTip(server['target'])
+            info.addWidget(detail)
+
+        status = _plain_label(self._status_text(server))
+        status.setWordWrap(True)
+        status.setStyleSheet(
+            f"color: {self._STATUS_COLORS[server['status']]}; font-size: 12px;")
+        if server['status'] == 'error' and server['error']:
+            status.setToolTip(server['error'])
+        info.addWidget(status)
+        row_layout.addLayout(info, 1)
+
+        tools_button = QPushButton("Hide tools" if expanded else "Tools")
+        tools_button.setObjectName("secondary_button")
+        tools_button.setToolTip("Choose which of its tools may run without asking")
+        tools_button.setMinimumWidth(110)
+        tools_button.clicked.connect(
+            lambda _, sid=server_id: self._toggle_tools(sid))
+        row_layout.addWidget(tools_button)
+
+        # While a check runs its result is about to overwrite the row, so the
+        # controls that change the row wait for it.
+        # A screen-control server has no switch of its own: the consent box
+        # above its rows turns it on and off.
+        if not server['screen_control']:
+            enabled_button = QPushButton("Enabled" if server['is_enabled'] else "Disabled")
+            enabled_button.setObjectName("toggle_button")
+            enabled_button.setCheckable(True)
+            enabled_button.setChecked(server['is_enabled'])
+            enabled_button.setToolTip("Click to turn this server off" if server['is_enabled']
+                                      else "Click to turn this server on")
+            enabled_button.setMinimumWidth(100)
+            enabled_button.setEnabled(not checking)
+            enabled_button.toggled.connect(
+                lambda checked, sid=server_id: self.enabled_changed.emit(sid, checked))
+            row_layout.addWidget(enabled_button)
+
+        check_button = QPushButton("Checking…" if checking else "Check")
+        check_button.setObjectName("secondary_button")
+        check_button.setMinimumWidth(110)
+        check_button.setEnabled(not checking)
+        check_button.clicked.connect(
+            lambda _, sid=server_id: self.check_requested.emit(sid))
+        row_layout.addWidget(check_button)
+
+        if server['is_builtin']:
+            # Keeps the buttons lined up with the rows that have a delete button.
+            row_layout.addSpacing(24)
+        else:
+            delete_button = QPushButton("✕")
+            delete_button.setObjectName("chat_delete_button")
+            delete_button.setToolTip(f'Delete "{server["name"]}"')
+            delete_button.setFixedSize(24, 24)
+            delete_button.setEnabled(not checking)
+            delete_button.clicked.connect(
+                lambda _, sid=server_id, title=server['name']: self.confirm_delete(sid, title))
+            row_layout.addWidget(delete_button)
+
+        if expanded:
+            outer_layout.addWidget(self._build_tools_panel(server))
+
+        return row
+
+    def _toggle_tools(self, server_id: str):
+        if server_id in self._expanded:
+            self._expanded.discard(server_id)
+        else:
+            self._expanded.add(server_id)
+        self.show_servers(self._servers)
+
+    def _build_tools_panel(self, server: dict) -> QFrame:
+        """The server's tools, each with whether it asks before running."""
+        panel = QFrame()
+        panel.setObjectName("tools_panel")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
+
+        tools = server['tool_list']
+        if not tools:
+            empty = QLabel("Check the server to see its tools.")
+            empty.setObjectName("hint_text")
+            layout.addWidget(empty)
+            return panel
+
+        if server['screen_control']:
+            hint = QLabel("All of this server's tools run without asking while the screen "
+                          "control box above is ticked, and are not offered at all while it "
+                          "is not.")
+        else:
+            hint = QLabel('A tool with "Run without asking" ticked runs as soon as the model '
+                          'calls it - no card in the chat to stop it. Tick only what you trust '
+                          'to run on its own.')
+        hint.setObjectName("hint_text")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        heading = QFrame()
+        heading.setObjectName("tools_heading")
+        heading_layout = QHBoxLayout(heading)
+        heading_layout.setContentsMargins(0, 0, 0, 4)
+        heading_layout.setSpacing(10)
+        tool_heading = QLabel("Tool")
+        tool_heading.setObjectName("column_heading")
+        check_heading = QLabel("Run without asking")
+        check_heading.setObjectName("column_heading")
+        check_heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        check_heading.setFixedWidth(self._CHECK_COLUMN_WIDTH)
+        heading_layout.addWidget(tool_heading, 1)
+        heading_layout.addWidget(check_heading)
+        layout.addWidget(heading)
+
+        for tool in tools:
+            layout.addWidget(self._build_tool_line(server['id'], tool))
+        return panel
+
+    def _build_tool_line(self, server_id: str, tool: dict) -> QWidget:
+        line = QWidget()
+        line.setObjectName("server_list")
+        line_layout = QHBoxLayout(line)
+        line_layout.setContentsMargins(0, 0, 0, 0)
+        line_layout.setSpacing(10)
+
+        text = QVBoxLayout()
+        text.setSpacing(0)
+        name = _plain_label(tool['name'])
+        name.setObjectName("tool_name")
+        text.addWidget(name)
+        description = tool['description']
+        if description:
+            # One line, the rest in the tooltip: some tools come with a whole
+            # paragraph.
+            summary = ElidedLabel(description.splitlines()[0])
+            summary.setObjectName("hint_text")
+            summary.setToolTip(description)
+            text.addWidget(summary)
+        line_layout.addLayout(text, 1)
+
+        if tool['shadowed_by']:
+            # The model reaches the other server's tool by this name, so a
+            # checkbox here would do nothing.
+            note = _plain_label(f'Used from "{tool["shadowed_by"]}"')
+            note.setObjectName("hint_text")
+            note.setWordWrap(True)
+            note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            note.setFixedWidth(self._CHECK_COLUMN_WIDTH)
+            line_layout.addWidget(note)
+            return line
+
+        # No text of its own: the column heading says what it is.
+        check = QCheckBox()
+        check.setObjectName("auto_approve_check")
+        check.setAccessibleName(f"Run {tool['name']} without asking")
+        if tool['locked']:
+            check.setChecked(tool['auto_approved'])
+            check.setEnabled(False)
+            check.setToolTip("Set for all of this server's tools by the screen control box above.")
+        elif not tool['asks_by_default']:
+            # Ticked and locked rather than a different widget, so every line
+            # answers the same question in the same place.
+            check.setChecked(True)
+            check.setEnabled(False)
+            check.setToolTip("This tool never asks - it runs without a card anyway.")
+        else:
+            check.setChecked(tool['auto_approved'])
+            check.setToolTip("Ticked: runs as soon as the model calls it.\n"
+                             "Unticked: a card in the chat asks you first.")
+            check.toggled.connect(
+                lambda checked, sid=server_id, tool_name=tool['name']:
+                    self.auto_approve_changed.emit(sid, tool_name, checked))
+        # Held in a cell as wide as the heading, so the box sits under its
+        # middle.
+        cell = QWidget()
+        cell.setObjectName("server_list")
+        cell.setFixedWidth(self._CHECK_COLUMN_WIDTH)
+        cell_layout = QHBoxLayout(cell)
+        cell_layout.setContentsMargins(0, 0, 0, 0)
+        cell_layout.addWidget(check, 0, Qt.AlignmentFlag.AlignCenter)
+        line_layout.addWidget(cell)
+        return line
+
+    @staticmethod
+    def _status_text(server: dict) -> str:
+        status = server['status']
+        if status == 'checking':
+            return "Checking connection…"
+        if status == 'error':
+            first_line = (server['error'] or "").strip().splitlines()
+            reason = f": {first_line[0]}" if first_line else ""
+            return f"Unavailable ({server['error_code']}){reason}"
+        if status == 'ok':
+            return f"Connected · {server['tools']} tool(s)"
+        if status == 'off':
+            return "Turned off"
+        if status == 'needs_consent':
+            return "Off · tick the box above to allow it"
+        return "Not checked yet"
+
+    def confirm_delete(self, server_id: str, server_name: str):
+        answer = QMessageBox.question(
+            self,
+            "Delete server",
+            f'Delete the MCP server "{server_name}"?\n\n'
+            "Its stored credentials are deleted too.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.delete_requested.emit(server_id)
+
+
+class ScreenControlSection(QFrame):
+    """Settings section where the user agrees to the assistant working the
+    screen, mouse and keyboard. Those steps cannot ask first - a card in the
+    chat would pull the focus away from the app being worked in - so they
+    stay off until the user agrees here."""
+
+    allowed_changed = Signal(bool)
+    check_requested = Signal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("card")
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+
+        heading = QLabel("Screen control")
+        heading.setObjectName("section_label")
+        layout.addWidget(heading)
+
+        about = QLabel(
+            "Lets the assistant take screenshots and use the mouse and keyboard to work in "
+            "other apps. It cannot ask before each step - a card in the chat would pull the "
+            "focus away from the app it is working in - so once you allow this, those steps "
+            "run without asking.")
+        about.setWordWrap(True)
+        layout.addWidget(about)
+
+        hint = QLabel(
+            "To stop it, press Stop in the chat or move the mouse into a corner of the screen - "
+            "the mouse and keyboard then stay blocked until you untick and tick this box again. "
+            "macOS also needs Accessibility and Screen Recording turned on for the app you "
+            "start the assistant from.")
+        hint.setObjectName("hint_text")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        self.allow_check = QCheckBox("Let the assistant control the screen without asking")
+        self.allow_check.setObjectName("consent_check")
+        self.allow_check.toggled.connect(self.allowed_changed.emit)
+        layout.addWidget(self.allow_check)
+
+        # The servers this box turns on and off, right under it.
+        self.server_list = ServerList()
+        self.server_list.check_requested.connect(self.check_requested)
+        layout.addWidget(self.server_list)
+
+    def set_allowed(self, allowed: bool):
+        # Showing the stored state is not the user changing it.
+        self.allow_check.blockSignals(True)
+        self.allow_check.setChecked(allowed)
+        self.allow_check.blockSignals(False)
+
+    def show_servers(self, servers: list[dict]):
+        self.server_list.show_servers(servers)
+
+
 class MCPServersSection(QFrame):
     """Settings section listing the user's MCP servers. Adding one happens in
     an inline form rather than a dialog, like the rest of the settings page."""
@@ -451,18 +808,6 @@ class MCPServersSection(QFrame):
     auto_approve_changed = Signal(str, str, bool)
     # Shown again - the controller re-reads the list so statuses are current.
     opened = Signal()
-
-    # The "Run without asking" column of the tools panel - its heading and
-    # every line's checkbox share the width, so they line up.
-    _CHECK_COLUMN_WIDTH = 150
-
-    _STATUS_COLORS = {
-        'ok': '#2e7d32',
-        'error': '#c62828',
-        'checking': '#3d5afe',
-        'off': '#8a8f98',
-        'unchecked': '#8a8f98',
-    }
 
     def __init__(self):
         super().__init__()
@@ -485,17 +830,12 @@ class MCPServersSection(QFrame):
         self.form.hide()
         layout.addWidget(self.form)
 
-        self.rows_container = QWidget()
-        self.rows_container.setObjectName("server_list")
-        self.rows_layout = QVBoxLayout(self.rows_container)
-        self.rows_layout.setContentsMargins(0, 0, 0, 0)
-        self.rows_layout.setSpacing(8)
-        layout.addWidget(self.rows_container)
-
-        # Every refresh rebuilds the rows - and checks refresh them several
-        # times on login - so which tool lists are open is kept here.
-        self._servers: list[dict] = []
-        self._expanded: set[str] = set()
+        self.server_list = ServerList()
+        self.server_list.delete_requested.connect(self.delete_requested)
+        self.server_list.enabled_changed.connect(self.enabled_changed)
+        self.server_list.check_requested.connect(self.check_requested)
+        self.server_list.auto_approve_changed.connect(self.auto_approve_changed)
+        layout.addWidget(self.server_list)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -583,253 +923,7 @@ class MCPServersSection(QFrame):
         })
 
     def show_servers(self, servers: list[dict]):
-        self._servers = servers
-        while self.rows_layout.count():
-            item = self.rows_layout.takeAt(0)
-            if item.widget() is not None:
-                # Hidden first: until deleteLater gets to it, an old row would
-                # still paint under the new ones - which now differ in height
-                # whenever a tool list is opened or closed.
-                item.widget().hide()
-                item.widget().deleteLater()
-
-        if not servers:
-            empty = QLabel("No servers yet.")
-            empty.setObjectName("placeholder_text")
-            self.rows_layout.addWidget(empty)
-            return
-
-        for server in servers:
-            self.rows_layout.addWidget(self._build_row(server))
-
-    def _build_row(self, server: dict) -> QFrame:
-        server_id = server['id']
-        checking = server['status'] == 'checking'
-        expanded = server_id in self._expanded
-
-        row = QFrame()
-        row.setObjectName("server_row")
-        outer_layout = QVBoxLayout(row)
-        outer_layout.setContentsMargins(12, 10, 12, 10)
-        outer_layout.setSpacing(10)
-        row_layout = QHBoxLayout()
-        row_layout.setSpacing(10)
-        outer_layout.addLayout(row_layout)
-
-        info = QVBoxLayout()
-        info.setSpacing(2)
-
-        title_line = QHBoxLayout()
-        title_line.setSpacing(6)
-        name = _plain_label(server['name'])
-        name.setObjectName("server_name")
-        title_line.addWidget(name)
-        tags = [server['transport']] + (['built-in'] if server['is_builtin'] else [])
-        for tag in tags:
-            tag_label = QLabel(tag)
-            tag_label.setObjectName("server_tag")
-            title_line.addWidget(tag_label)
-        title_line.addStretch(1)
-        info.addLayout(title_line)
-
-        if server['detail']:
-            detail = _plain_label(server['detail'])
-            detail.setObjectName("hint_text")
-            detail.setToolTip(server['target'])
-            info.addWidget(detail)
-
-        status = _plain_label(self._status_text(server))
-        status.setWordWrap(True)
-        status.setStyleSheet(
-            f"color: {self._STATUS_COLORS[server['status']]}; font-size: 12px;")
-        if server['status'] == 'error' and server['error']:
-            status.setToolTip(server['error'])
-        info.addWidget(status)
-        row_layout.addLayout(info, 1)
-
-        tools_button = QPushButton("Hide tools" if expanded else "Tools")
-        tools_button.setObjectName("secondary_button")
-        tools_button.setToolTip("Choose which of its tools may run without asking")
-        tools_button.setMinimumWidth(110)
-        tools_button.clicked.connect(
-            lambda _, sid=server_id: self._toggle_tools(sid))
-        row_layout.addWidget(tools_button)
-
-        # While a check runs its result is about to overwrite the row, so the
-        # controls that change the row wait for it.
-        enabled_button = QPushButton("Enabled" if server['is_enabled'] else "Disabled")
-        enabled_button.setObjectName("toggle_button")
-        enabled_button.setCheckable(True)
-        enabled_button.setChecked(server['is_enabled'])
-        enabled_button.setToolTip("Click to turn this server off" if server['is_enabled']
-                                  else "Click to turn this server on")
-        enabled_button.setMinimumWidth(100)
-        enabled_button.setEnabled(not checking)
-        enabled_button.toggled.connect(
-            lambda checked, sid=server_id: self.enabled_changed.emit(sid, checked))
-        row_layout.addWidget(enabled_button)
-
-        check_button = QPushButton("Checking…" if checking else "Check")
-        check_button.setObjectName("secondary_button")
-        check_button.setMinimumWidth(110)
-        check_button.setEnabled(not checking)
-        check_button.clicked.connect(
-            lambda _, sid=server_id: self.check_requested.emit(sid))
-        row_layout.addWidget(check_button)
-
-        if server['is_builtin']:
-            # Keeps the buttons lined up with the rows that have a delete button.
-            row_layout.addSpacing(24)
-        else:
-            delete_button = QPushButton("✕")
-            delete_button.setObjectName("chat_delete_button")
-            delete_button.setToolTip(f'Delete "{server["name"]}"')
-            delete_button.setFixedSize(24, 24)
-            delete_button.setEnabled(not checking)
-            delete_button.clicked.connect(
-                lambda _, sid=server_id, title=server['name']: self.confirm_delete(sid, title))
-            row_layout.addWidget(delete_button)
-
-        if expanded:
-            outer_layout.addWidget(self._build_tools_panel(server))
-
-        return row
-
-    def _toggle_tools(self, server_id: str):
-        if server_id in self._expanded:
-            self._expanded.discard(server_id)
-        else:
-            self._expanded.add(server_id)
-        self.show_servers(self._servers)
-
-    def _build_tools_panel(self, server: dict) -> QFrame:
-        """The server's tools, each with whether it asks before running."""
-        panel = QFrame()
-        panel.setObjectName("tools_panel")
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(8)
-
-        tools = server['tool_list']
-        if not tools:
-            empty = QLabel("Check the server to see its tools.")
-            empty.setObjectName("hint_text")
-            layout.addWidget(empty)
-            return panel
-
-        hint = QLabel('A tool with "Run without asking" ticked runs as soon as the model '
-                      'calls it - no card in the chat to stop it. Tick only what you trust '
-                      'to run on its own.')
-        hint.setObjectName("hint_text")
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
-
-        heading = QFrame()
-        heading.setObjectName("tools_heading")
-        heading_layout = QHBoxLayout(heading)
-        heading_layout.setContentsMargins(0, 0, 0, 4)
-        heading_layout.setSpacing(10)
-        tool_heading = QLabel("Tool")
-        tool_heading.setObjectName("column_heading")
-        check_heading = QLabel("Run without asking")
-        check_heading.setObjectName("column_heading")
-        check_heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        check_heading.setFixedWidth(self._CHECK_COLUMN_WIDTH)
-        heading_layout.addWidget(tool_heading, 1)
-        heading_layout.addWidget(check_heading)
-        layout.addWidget(heading)
-
-        for tool in tools:
-            layout.addWidget(self._build_tool_line(server['id'], tool))
-        return panel
-
-    def _build_tool_line(self, server_id: str, tool: dict) -> QWidget:
-        line = QWidget()
-        line.setObjectName("server_list")
-        line_layout = QHBoxLayout(line)
-        line_layout.setContentsMargins(0, 0, 0, 0)
-        line_layout.setSpacing(10)
-
-        text = QVBoxLayout()
-        text.setSpacing(0)
-        name = _plain_label(tool['name'])
-        name.setObjectName("tool_name")
-        text.addWidget(name)
-        description = tool['description']
-        if description:
-            # One line, the rest in the tooltip: some tools come with a whole
-            # paragraph.
-            summary = ElidedLabel(description.splitlines()[0])
-            summary.setObjectName("hint_text")
-            summary.setToolTip(description)
-            text.addWidget(summary)
-        line_layout.addLayout(text, 1)
-
-        if tool['shadowed_by']:
-            # The model reaches the other server's tool by this name, so a
-            # checkbox here would do nothing.
-            note = _plain_label(f'Used from "{tool["shadowed_by"]}"')
-            note.setObjectName("hint_text")
-            note.setWordWrap(True)
-            note.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            note.setFixedWidth(self._CHECK_COLUMN_WIDTH)
-            line_layout.addWidget(note)
-            return line
-
-        # No text of its own: the column heading says what it is.
-        check = QCheckBox()
-        check.setObjectName("auto_approve_check")
-        check.setAccessibleName(f"Run {tool['name']} without asking")
-        if not tool['asks_by_default']:
-            # Ticked and locked rather than a different widget, so every line
-            # answers the same question in the same place.
-            check.setChecked(True)
-            check.setEnabled(False)
-            check.setToolTip("This tool never asks - it runs without a card anyway.")
-        else:
-            check.setChecked(tool['auto_approved'])
-            check.setToolTip("Ticked: runs as soon as the model calls it.\n"
-                             "Unticked: a card in the chat asks you first.")
-            check.toggled.connect(
-                lambda checked, sid=server_id, tool_name=tool['name']:
-                    self.auto_approve_changed.emit(sid, tool_name, checked))
-        # Held in a cell as wide as the heading, so the box sits under its
-        # middle.
-        cell = QWidget()
-        cell.setObjectName("server_list")
-        cell.setFixedWidth(self._CHECK_COLUMN_WIDTH)
-        cell_layout = QHBoxLayout(cell)
-        cell_layout.setContentsMargins(0, 0, 0, 0)
-        cell_layout.addWidget(check, 0, Qt.AlignmentFlag.AlignCenter)
-        line_layout.addWidget(cell)
-        return line
-
-    @staticmethod
-    def _status_text(server: dict) -> str:
-        status = server['status']
-        if status == 'checking':
-            return "Checking connection…"
-        if status == 'error':
-            first_line = (server['error'] or "").strip().splitlines()
-            reason = f": {first_line[0]}" if first_line else ""
-            return f"Unavailable ({server['error_code']}){reason}"
-        if status == 'ok':
-            return f"Connected · {server['tools']} tool(s)"
-        if status == 'off':
-            return "Turned off"
-        return "Not checked yet"
-
-    def confirm_delete(self, server_id: str, server_name: str):
-        answer = QMessageBox.question(
-            self,
-            "Delete server",
-            f'Delete the MCP server "{server_name}"?\n\n'
-            "Its stored credentials are deleted too.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
-        )
-        if answer == QMessageBox.StandardButton.Yes:
-            self.delete_requested.emit(server_id)
+        self.server_list.show_servers(servers)
 
 
 class ChatPage(QWidget):
