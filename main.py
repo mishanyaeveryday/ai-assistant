@@ -9,6 +9,7 @@ from interface.gui.controller import RegistrationController, LoginController, Ma
 import sys
 import os
 from PySide6.QtWidgets import QApplication, QMainWindow, QLabel
+from PySide6.QtCore import QDir
 from agent.mcp_client import MCPClient, IDLE_SWEEP_SECONDS
 
 from qasync import QEventLoop, asyncSlot
@@ -132,6 +133,9 @@ if __name__ == '__main__':
 
     style_path = os.path.join(os.path.dirname(
         __file__), "interface", "gui", "style.qss")
+    # The stylesheet names its images as icons:<file>, so they are found
+    # wherever the app is started from.
+    QDir.addSearchPath("icons", os.path.join(os.path.dirname(style_path), "icons"))
     with open(style_path, encoding="utf-8") as f:
         app.setStyleSheet(f.read())
 

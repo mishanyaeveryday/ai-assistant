@@ -8,7 +8,7 @@ import shiboken6
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout,
                                QPushButton, QLabel, QLineEdit, QFormLayout, QHBoxLayout, QFrame, QScrollArea,
                                QButtonGroup, QGraphicsDropShadowEffect, QPlainTextEdit, QStackedWidget,
-                               QMessageBox, QInputDialog, QDialog, QRadioButton, QSizePolicy,
+                               QMessageBox, QInputDialog, QDialog, QSizePolicy, QCheckBox,
                                QFileDialog)
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtCore import Qt, Signal, QTimer, QEvent
@@ -452,6 +452,10 @@ class MCPServersSection(QFrame):
     # Shown again - the controller re-reads the list so statuses are current.
     opened = Signal()
 
+    # The "Run without asking" column of the tools panel - its heading and
+    # every line's checkbox share the width, so they line up.
+    _CHECK_COLUMN_WIDTH = 150
+
     _STATUS_COLORS = {
         'ok': '#2e7d32',
         'error': '#c62828',
@@ -504,58 +508,34 @@ class MCPServersSection(QFrame):
         form_outer.setContentsMargins(14, 12, 14, 12)
         form_outer.setSpacing(8)
 
-        self.form_layout = QFormLayout()
+        form_layout = QFormLayout()
 
         self.name_input = QLineEdit()
         self.name_input.setPlaceholderText("github")
 
-        transport_row = QWidget()
-        transport_row.setObjectName("server_list")
-        transport_layout = QHBoxLayout(transport_row)
-        transport_layout.setContentsMargins(0, 0, 0, 0)
-        self.stdio_radio = QRadioButton("Local command (stdio)")
-        self.http_radio = QRadioButton("URL (http)")
-        self.stdio_radio.setChecked(True)
-        self.transport_group = QButtonGroup(form)
-        self.transport_group.addButton(self.stdio_radio)
-        self.transport_group.addButton(self.http_radio)
-        self.stdio_radio.toggled.connect(self._update_transport_rows)
-        transport_layout.addWidget(self.stdio_radio)
-        transport_layout.addWidget(self.http_radio)
-        transport_layout.addStretch(1)
+        self.config_input = QPlainTextEdit()
+        self.config_input.setObjectName("form_text")
+        self.config_input.setPlaceholderText(
+            '{\n'
+            '  "command": "npx",\n'
+            '  "args": ["-y", "@modelcontextprotocol/server-github"],\n'
+            '  "env": { "GITHUB_TOKEN": "ghp_..." }\n'
+            '}\n'
+            '\n'
+            '{\n'
+            '  "url": "https://example.com/mcp",\n'
+            '  "headers": { "Authorization": "Bearer ..." }\n'
+            '}')
+        self.config_input.setFixedHeight(190)
 
-        self.command_input = QLineEdit()
-        self.command_input.setPlaceholderText(
-            "npx -y @modelcontextprotocol/server-github")
+        form_layout.addRow("Name:", self.name_input)
+        form_layout.addRow("JSON:", self.config_input)
+        form_outer.addLayout(form_layout)
 
-        self.env_input = QPlainTextEdit()
-        self.env_input.setObjectName("form_text")
-        self.env_input.setPlaceholderText("GITHUB_TOKEN=ghp_...\nOne KEY=value per line")
-        self.env_input.setFixedHeight(64)
-
-        self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText("https://example.com/mcp")
-
-        self.headers_input = QPlainTextEdit()
-        self.headers_input.setObjectName("form_text")
-        self.headers_input.setPlaceholderText(
-            "Authorization: Bearer ...\nOne Name: value per line")
-        self.headers_input.setFixedHeight(64)
-
-        self.description_input = QLineEdit()
-        self.description_input.setPlaceholderText("Optional")
-
-        self.form_layout.addRow("Name:", self.name_input)
-        self.form_layout.addRow("Type:", transport_row)
-        self.form_layout.addRow("Command:", self.command_input)
-        self.form_layout.addRow("Environment:", self.env_input)
-        self.form_layout.addRow("URL:", self.url_input)
-        self.form_layout.addRow("Headers:", self.headers_input)
-        self.form_layout.addRow("Description:", self.description_input)
-        form_outer.addLayout(self.form_layout)
-
-        hint = QLabel("Put tokens in Environment or Headers - those values are "
-                      "stored encrypted. The command is stored as plain text.")
+        hint = QLabel('Paste the config from the server\'s docs - one entry, or the '
+                      'whole {"mcpServers": {...}} block; Name can stay empty if the '
+                      'JSON names the server. Values in "env" and "headers" are '
+                      'stored encrypted; "command", "args" and "url" are plain text.')
         hint.setObjectName("hint_text")
         hint.setWordWrap(True)
         form_outer.addWidget(hint)
@@ -577,17 +557,7 @@ class MCPServersSection(QFrame):
         buttons.addWidget(self.submit_button)
         form_outer.addLayout(buttons)
 
-        self._update_transport_rows()
         return form
-
-    def _update_transport_rows(self):
-        is_stdio = self.stdio_radio.isChecked()
-        # An error about the other type's fields no longer applies.
-        self.form_error.hide()
-        self.form_layout.setRowVisible(self.command_input, is_stdio)
-        self.form_layout.setRowVisible(self.env_input, is_stdio)
-        self.form_layout.setRowVisible(self.url_input, not is_stdio)
-        self.form_layout.setRowVisible(self.headers_input, not is_stdio)
 
     def open_form(self):
         self.form.show()
@@ -595,10 +565,8 @@ class MCPServersSection(QFrame):
         self.name_input.setFocus()
 
     def close_form(self):
-        for field in (self.name_input, self.command_input, self.url_input,
-                      self.description_input, self.env_input, self.headers_input):
-            field.clear()
-        self.stdio_radio.setChecked(True)
+        self.name_input.clear()
+        self.config_input.clear()
         self.form_error.hide()
         self.form.hide()
         self.add_button.show()
@@ -611,12 +579,7 @@ class MCPServersSection(QFrame):
         self.form_error.hide()
         self.add_requested.emit({
             'name': self.name_input.text(),
-            'transport': 'stdio' if self.stdio_radio.isChecked() else 'http',
-            'command': self.command_input.text(),
-            'env': self.env_input.toPlainText(),
-            'url': self.url_input.text(),
-            'headers': self.headers_input.toPlainText(),
-            'description': self.description_input.text(),
+            'config': self.config_input.toPlainText(),
         })
 
     def show_servers(self, servers: list[dict]):
@@ -754,11 +717,27 @@ class MCPServersSection(QFrame):
             layout.addWidget(empty)
             return panel
 
-        hint = QLabel("An allowed tool runs as soon as the model calls it - no card "
-                      "in the chat to stop it. Allow only what you trust it to do on its own.")
+        hint = QLabel('A tool with "Run without asking" ticked runs as soon as the model '
+                      'calls it - no card in the chat to stop it. Tick only what you trust '
+                      'to run on its own.')
         hint.setObjectName("hint_text")
         hint.setWordWrap(True)
         layout.addWidget(hint)
+
+        heading = QFrame()
+        heading.setObjectName("tools_heading")
+        heading_layout = QHBoxLayout(heading)
+        heading_layout.setContentsMargins(0, 0, 0, 4)
+        heading_layout.setSpacing(10)
+        tool_heading = QLabel("Tool")
+        tool_heading.setObjectName("column_heading")
+        check_heading = QLabel("Run without asking")
+        check_heading.setObjectName("column_heading")
+        check_heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        check_heading.setFixedWidth(self._CHECK_COLUMN_WIDTH)
+        heading_layout.addWidget(tool_heading, 1)
+        heading_layout.addWidget(check_heading)
+        layout.addWidget(heading)
 
         for tool in tools:
             layout.addWidget(self._build_tool_line(server['id'], tool))
@@ -788,28 +767,41 @@ class MCPServersSection(QFrame):
 
         if tool['shadowed_by']:
             # The model reaches the other server's tool by this name, so a
-            # switch here would do nothing.
+            # checkbox here would do nothing.
             note = _plain_label(f'Used from "{tool["shadowed_by"]}"')
             note.setObjectName("hint_text")
+            note.setWordWrap(True)
+            note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            note.setFixedWidth(self._CHECK_COLUMN_WIDTH)
             line_layout.addWidget(note)
-        elif not tool['asks_by_default']:
-            note = QLabel("Never asks")
-            note.setObjectName("hint_text")
-            note.setToolTip("This tool runs without asking anyway.")
-            line_layout.addWidget(note)
+            return line
+
+        # No text of its own: the column heading says what it is.
+        check = QCheckBox()
+        check.setObjectName("auto_approve_check")
+        check.setAccessibleName(f"Run {tool['name']} without asking")
+        if not tool['asks_by_default']:
+            # Ticked and locked rather than a different widget, so every line
+            # answers the same question in the same place.
+            check.setChecked(True)
+            check.setEnabled(False)
+            check.setToolTip("This tool never asks - it runs without a card anyway.")
         else:
-            allowed = tool['auto_approved']
-            switch = QPushButton("Runs without asking" if allowed else "Asks first")
-            switch.setObjectName("toggle_button")
-            switch.setCheckable(True)
-            switch.setChecked(allowed)
-            switch.setMinimumWidth(170)
-            switch.setToolTip("Click to make it ask first again" if allowed
-                              else "Click to let it run without asking")
-            switch.toggled.connect(
+            check.setChecked(tool['auto_approved'])
+            check.setToolTip("Ticked: runs as soon as the model calls it.\n"
+                             "Unticked: a card in the chat asks you first.")
+            check.toggled.connect(
                 lambda checked, sid=server_id, tool_name=tool['name']:
                     self.auto_approve_changed.emit(sid, tool_name, checked))
-            line_layout.addWidget(switch, 0, Qt.AlignmentFlag.AlignTop)
+        # Held in a cell as wide as the heading, so the box sits under its
+        # middle.
+        cell = QWidget()
+        cell.setObjectName("server_list")
+        cell.setFixedWidth(self._CHECK_COLUMN_WIDTH)
+        cell_layout = QHBoxLayout(cell)
+        cell_layout.setContentsMargins(0, 0, 0, 0)
+        cell_layout.addWidget(check, 0, Qt.AlignmentFlag.AlignCenter)
+        line_layout.addWidget(cell)
         return line
 
     @staticmethod

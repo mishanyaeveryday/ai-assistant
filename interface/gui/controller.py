@@ -6,14 +6,36 @@ from interface.gui.worker import AIWorker, STOPPED_OUTPUT
 from interface.gui.mcp_tools_approval import HumanToolApproval
 from agent.tools_policy import ToolsApprovalPolicy
 import asyncio
+import json
 import re
-import shlex
 
 # Server names also prefix the names of their secrets, which may not contain
 # anything else - and a dot is what separates the parts of those names.
 _SERVER_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _HEADER_NAME_RE = re.compile(r"^[A-Za-z0-9-]+$")
+
+# What a pasted server entry may hold, by transport. Configs written for other
+# clients can carry more (cwd, timeout, ...); those are refused rather than
+# dropped, since a server started without them may not behave as expected.
+_ENTRY_KEYS = {
+    MCPServer.STDIO: {'type', 'command', 'args', 'env', 'description'},
+    MCPServer.HTTP: {'type', 'url', 'headers', 'description'},
+}
+# Values of "type" as different clients spell them.
+_TYPE_NAMES = {
+    'stdio': MCPServer.STDIO,
+    'http': MCPServer.HTTP,
+    'streamable-http': MCPServer.HTTP,
+    'streamableHttp': MCPServer.HTTP,
+}
+_NEEDS_COMMAND_OR_URL = ('The JSON needs a "command" (local server) '
+                         'or a "url" (remote server).')
+# Placeholders other clients fill in before starting a server - VS Code's
+# ${input:...} asks the user, ${env:...} and ${workspaceFolder} read its own
+# state. Nothing here fills them in, so one would reach the server as literal
+# text. ${secret:NAME} is this app's own reference and is left alone.
+_FOREIGN_PLACEHOLDER_RE = re.compile(r"\$\{(?!secret:)[^}]*\}")
 
 
 class ViewManager:
@@ -303,61 +325,134 @@ class AIClientController(QObject):
         self._reply_in(chat_id, STOPPED_OUTPUT)
 
 
-def _parse_pairs(text: str, separator: str, key_re: re.Pattern, what: str) -> dict:
-    """Reads one `key<separator>value` pair per line. Blank lines and lines
-    starting with # are skipped, so a pasted snippet can keep its comments."""
-    pairs = {}
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith('#'):
-            continue
-        key, found, value = line.partition(separator)
-        key = key.strip()
-        if not found or not key_re.match(key):
+def _server_entry(data) -> tuple[str | None, dict]:
+    """Finds the one server in the pasted JSON, along with the name it is
+    filed under if it has one. Docs usually show a server inside
+    {"mcpServers": {"name": {...}}} - VS Code says "servers" - so both the
+    wrapper and the name level are optional."""
+    if not isinstance(data, dict):
+        raise ValueError("The JSON must be an object: { ... }.")
+    for wrapper in ('mcpServers', 'servers'):
+        if isinstance(data.get(wrapper), dict):
+            data = data[wrapper]
+            break
+    if 'command' in data or 'url' in data:
+        return None, data
+
+    servers = [key for key, value in data.items() if isinstance(value, dict)]
+    if len(servers) > 1:
+        raise ValueError(f"The JSON has {len(servers)} servers "
+                         f"({', '.join(servers)}) - add them one at a time.")
+    if len(servers) == 1 and len(data) == 1:
+        return servers[0], data[servers[0]]
+    raise ValueError(_NEEDS_COMMAND_OR_URL)
+
+
+def _strings(value):
+    """Every string inside a pasted value, however deeply nested."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, list):
+        for item in value:
+            yield from _strings(item)
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _strings(item)
+
+
+def _string_map(value, key_re: re.Pattern, what: str) -> dict:
+    """Checks an env or headers object. A value left unquoted is refused
+    rather than converted, so what gets stored is exactly what was pasted."""
+    if not isinstance(value, dict):
+        raise ValueError(f'{what} must be an object: {{"NAME": "value"}}.')
+    for key, item in value.items():
+        if not key_re.match(key):
+            raise ValueError(f'{what}: "{key}" is not a valid name.')
+        if not isinstance(item, str):
             raise ValueError(
-                f'{what}: "{line}" is not a valid "name{separator}value" line.')
-        if key in pairs:
-            raise ValueError(f'{what}: "{key}" is set twice.')
-        pairs[key] = value.strip()
-    return pairs
+                f'{what}: the value of "{key}" must be a string - put it in quotes.')
+    return dict(value)
 
 
 def parse_server_form(form: dict) -> dict:
-    """Turns what was typed into the add-server form into the arguments of
+    """Turns the add-server form - a name and the server's JSON config, in
+    the shape MCP servers document it - into the arguments of
     MCPServerService.add_user_server. Raises ValueError with a message meant
     for the user."""
-    name = form.get('name', '').strip()
+    text = form.get('config', '').strip()
+    if not text:
+        raise ValueError("Paste the server's JSON config.")
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"JSON: {e.msg} (line {e.lineno}, column {e.colno}).") from None
+    filed_name, entry = _server_entry(data)
+
+    typed_name = form.get('name', '').strip()
+    name = typed_name or (filed_name or '').strip()
     if not name:
         raise ValueError("Name is required.")
     if not _SERVER_NAME_RE.match(name):
+        if not typed_name:
+            raise ValueError(f'The JSON names the server "{name}" - type a Name '
+                             'using only letters, digits, _ and -.')
         raise ValueError("Name may only contain letters, digits, _ and -.")
 
+    if 'command' in entry and 'url' in entry:
+        raise ValueError('Give either "command" or "url", not both.')
+    if 'command' not in entry and 'url' not in entry:
+        raise ValueError(_NEEDS_COMMAND_OR_URL)
+    transport = MCPServer.HTTP if 'url' in entry else MCPServer.STDIO
+
+    kind = entry.get('type')
+    if kind == 'sse':
+        # The client only speaks streamable HTTP.
+        raise ValueError('SSE servers are not supported, only streamable HTTP - '
+                         'many servers offer it too, often at a URL ending in /mcp.')
+    if kind is not None and (not isinstance(kind, str) or kind not in _TYPE_NAMES):
+        raise ValueError(f'Unknown "type": {json.dumps(kind)}.')
+    if kind is not None and _TYPE_NAMES[kind] != transport:
+        given = 'url' if transport == MCPServer.HTTP else 'command'
+        raise ValueError(f'"type": "{kind}" does not fit a server with a "{given}".')
+
+    unsupported = sorted(set(entry) - _ENTRY_KEYS[transport])
+    if unsupported:
+        what = 'a remote server' if transport == MCPServer.HTTP else 'a local command'
+        raise ValueError(f"Not supported for {what}: "
+                         + ", ".join(f'"{key}"' for key in unsupported) + ".")
+    for text in _strings(entry):
+        placeholder = _FOREIGN_PLACEHOLDER_RE.search(text)
+        if placeholder:
+            raise ValueError(
+                f'"{placeholder.group()}" is a placeholder another app fills in - '
+                'put the actual value in its place.')
+
+    description = entry.get('description') or ''
+    if not isinstance(description, str):
+        raise ValueError('"description" must be a string.')
     server = {
         'name': name,
-        'transport': form.get('transport'),
-        'description': form.get('description', '').strip() or None,
+        'transport': transport,
+        'description': description.strip() or None,
     }
 
-    if server['transport'] == MCPServer.STDIO:
-        try:
-            parts = shlex.split(form.get('command', ''))
-        except ValueError as e:
-            raise ValueError(f"Command: {e}.") from None
-        if not parts:
-            raise ValueError("Command is required.")
-        server['command'] = parts[0]
-        server['args'] = parts[1:]
-        server['env'] = _parse_pairs(
-            form.get('env', ''), '=', _ENV_KEY_RE, "Environment")
-    elif server['transport'] == MCPServer.HTTP:
-        url = form.get('url', '').strip()
-        if not url.startswith(('http://', 'https://')):
-            raise ValueError("URL must start with http:// or https://.")
-        server['url'] = url
-        server['headers'] = _parse_pairs(
-            form.get('headers', ''), ':', _HEADER_NAME_RE, "Headers")
+    if transport == MCPServer.STDIO:
+        command = entry['command']
+        if not isinstance(command, str) or not command.strip():
+            raise ValueError('"command" must be a non-empty string.')
+        args = entry.get('args', [])
+        if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
+            raise ValueError('"args" must be a list of strings.')
+        server['command'] = command.strip()
+        server['args'] = args
+        server['env'] = _string_map(entry.get('env', {}), _ENV_KEY_RE, '"env"')
     else:
-        raise ValueError("Choose the server type.")
+        url = entry['url']
+        if not isinstance(url, str) or not url.strip().startswith(('http://', 'https://')):
+            raise ValueError('"url" must start with http:// or https://.')
+        server['url'] = url.strip()
+        server['headers'] = _string_map(
+            entry.get('headers', {}), _HEADER_NAME_RE, '"headers"')
 
     return server
 
