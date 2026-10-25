@@ -7,12 +7,14 @@ broken server can be recorded and switched off rather than taking the app down.
 import asyncio
 import sys
 import tempfile
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
 import httpx
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
+from mcp.shared._httpx_utils import create_mcp_http_client
 
 PROBE_TIMEOUT_SECONDS = 15.0
 # How much of a crashed server's stderr to keep. The bottom of a traceback is
@@ -42,6 +44,18 @@ def resolve_stdio_command(command: str | None, args: list | None) -> str:
         return command
     script = args[0] if args else ""
     return "node" if str(script).endswith(".js") else sys.executable
+
+
+@asynccontextmanager
+async def open_streamable_http(url: str, headers: dict | None,
+                               timeout: httpx.Timeout | None = None):
+    """Connects to a streamable HTTP server. The SDK transport takes a ready
+    httpx client rather than headers, and leaves closing a client it was
+    given to the caller - which is what the outer block is for."""
+    async with create_mcp_http_client(
+            headers=dict(headers) if headers else None, timeout=timeout) as http_client:
+        async with streamable_http_client(url, http_client=http_client) as streams:
+            yield streams
 
 
 def _leaf_exceptions(exc: BaseException):
@@ -146,10 +160,8 @@ async def _probe_http(url, headers) -> ProbeResult:
     if not url:
         return ProbeResult(False, "invalid_config", "This http server has no URL.")
 
-    async with streamable_http_client(
-        url=url,
-        headers=dict(headers) if headers else None,
-        timeout=PROBE_TIMEOUT_SECONDS,
+    async with open_streamable_http(
+        url, headers, timeout=httpx.Timeout(PROBE_TIMEOUT_SECONDS),
     ) as (read, write, _get_session_id):
         return await _handshake(read, write)
 

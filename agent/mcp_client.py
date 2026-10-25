@@ -18,9 +18,8 @@ from pathlib import Path
 
 from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
-from mcp.client.streamable_http import streamable_http_client
 
-from agent.mcp_probe import resolve_stdio_command
+from agent.mcp_probe import open_streamable_http, resolve_stdio_command
 
 # How long a connection may sit unused before it is closed. Counted from the
 # last call that went through it, not from when it started: a session ending
@@ -75,10 +74,7 @@ class _Connection:
             )
             return stdio_client(params)
         if self.spec.transport == "http":
-            return streamable_http_client(
-                url=self.spec.url,
-                headers=dict(self.spec.headers) if self.spec.headers else None,
-            )
+            return open_streamable_http(self.spec.url, self.spec.headers)
         raise ValueError(f"Unknown transport {self.spec.transport!r}")
 
     async def _run(self):
