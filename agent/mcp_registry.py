@@ -6,14 +6,19 @@ server is looked up by tool name and started if needed - the model never
 chooses a server, and never learns that servers have a running state.
 """
 from agent.mcp_client import ConnectionSpec
+from core.services import uses_openrouter
 
 
 class MCPRegistry:
-    def __init__(self, mcp_server_service, mcp_client, user_id: str | None = None):
+    def __init__(self, mcp_server_service, mcp_client, user_id: str | None = None,
+                 model_settings=None):
         self._service = mcp_server_service
         self._client = mcp_client
         self.user_id = user_id
         self._owners: dict = {}
+        # Gives the servers that call OpenRouter the user's key and model;
+        # without it they read .env.
+        self._model_settings = model_settings
 
     def set_user(self, user_id: str | None):
         """A new login must not inherit the previous user's servers."""
@@ -59,12 +64,31 @@ class MCPRegistry:
         is reused as-is, so it would never pick up a changed config."""
         return await self._client.disconnect(server_id)
 
+    async def stop_openrouter_servers(self, user_id: str):
+        """Shuts down this user's servers that call OpenRouter, after their
+        key or model changed: they were started with the old ones, and the
+        next call starts them again with the new."""
+        for server in self._service.get_user_servers(user_id):
+            if uses_openrouter(server):
+                await self._client.disconnect(server.id)
+
+    def _openrouter_env(self, user_id: str) -> dict:
+        model, api_key = self._model_settings.llm_config(user_id)
+        env = {"LLM_MODEL": model}
+        if api_key:
+            env["OPENROUTER_API_KEY"] = api_key
+        return env
+
     def _spec_for(self, server) -> ConnectionSpec:
         # Secrets are decrypted here and go straight into the spec that starts
         # the process. They are never written back to the row, and never put on
         # the MCPServer object callers can read field by field.
         env, _ = self._service.resolve_secrets(server.user_id, server.env)
         headers, _ = self._service.resolve_secrets(server.user_id, server.headers)
+        if self._model_settings is not None and uses_openrouter(server):
+            # Only to these: a server running shell commands would hand the
+            # key to every command the model runs.
+            env = {**(env or {}), **self._openrouter_env(server.user_id)}
         return ConnectionSpec(
             id=server.id,
             name=server.name,

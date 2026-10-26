@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout,
                                QPushButton, QLabel, QLineEdit, QFormLayout, QHBoxLayout, QFrame, QScrollArea,
                                QButtonGroup, QGraphicsDropShadowEffect, QPlainTextEdit, QStackedWidget,
                                QMessageBox, QInputDialog, QDialog, QSizePolicy, QCheckBox,
-                               QFileDialog)
+                               QFileDialog, QComboBox, QCompleter)
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtCore import Qt, Signal, QTimer, QEvent
 
@@ -437,6 +437,177 @@ def _plain_label(text: str = "") -> QLabel:
     label = QLabel(text)
     label.setTextFormat(Qt.TextFormat.PlainText)
     return label
+
+
+class ModelSection(QFrame):
+    """Settings section for the model the assistant answers with and the
+    OpenRouter key it uses. Both are optional: without them the ones in .env
+    are used."""
+
+    # (model id, key typed in - empty keeps the key there is)
+    save_requested = Signal(str, str)
+    remove_key_requested = Signal()
+    # Shown again - the controller re-reads what is saved, and loads the list
+    # of models the first time.
+    opened = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("card")
+        self._default_model = ""
+        self._models_loaded = False
+        self._models_unavailable = False
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+
+        heading = QLabel("Model")
+        heading.setObjectName("section_label")
+        layout.addWidget(heading)
+
+        about = QLabel(
+            'The models and the API key both come from <a href="https://openrouter.ai">OpenRouter</a>: '
+            'see the models at <a href="https://openrouter.ai/models">openrouter.ai/models</a> and '
+            'create a key at <a href="https://openrouter.ai/keys">openrouter.ai/keys</a>.')
+        about.setTextFormat(Qt.TextFormat.RichText)
+        about.setOpenExternalLinks(True)
+        about.setWordWrap(True)
+        layout.addWidget(about)
+
+        form = QFormLayout()
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+
+        # Editable, so a model id can also be typed - the list is OpenRouter's
+        # and may not have loaded.
+        self.model_input = QComboBox()
+        self.model_input.setEditable(True)
+        self.model_input.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.model_input.setMaxVisibleItems(15)
+        # Hundreds of ids: without this the box would grow to the longest.
+        self.model_input.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.model_input.setMinimumContentsLength(24)
+        # Typing "flash" finds every flash model, not only ids starting so.
+        completer = self.model_input.completer()
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+
+        self.model_hint = QLabel()
+        self.model_hint.setObjectName("hint_text")
+        self.model_hint.setWordWrap(True)
+
+        self.key_input = QLineEdit()
+        self.key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.key_input.returnPressed.connect(self._submit)
+
+        self.key_status = QLabel()
+        self.key_status.setObjectName("hint_text")
+        self.key_status.setWordWrap(True)
+
+        form.addRow("Model:", self.model_input)
+        form.addRow("", self.model_hint)
+        form.addRow("API key:", self.key_input)
+        form.addRow("", self.key_status)
+        layout.addLayout(form)
+
+        self.error = _plain_label()
+        self.error.setObjectName("error_text")
+        self.error.setWordWrap(True)
+        self.error.hide()
+        layout.addWidget(self.error)
+
+        buttons = QHBoxLayout()
+        self.saved_notice = QLabel("Saved.")
+        self.saved_notice.setObjectName("hint_text")
+        self.saved_notice.hide()
+        self.remove_key_button = QPushButton("Remove key")
+        self.remove_key_button.setObjectName("secondary_button")
+        self.remove_key_button.setToolTip("Delete your key and use the one from .env again")
+        self.remove_key_button.clicked.connect(self.remove_key_requested.emit)
+        self.save_button = QPushButton("Save")
+        self.save_button.clicked.connect(self._submit)
+        buttons.addStretch(1)
+        buttons.addWidget(self.saved_notice)
+        buttons.addWidget(self.remove_key_button)
+        buttons.addWidget(self.save_button)
+        layout.addLayout(buttons)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.opened.emit()
+
+    def show_settings(self, model: str, default_model: str, key_source: str | None):
+        """What is saved now. key_source is "user", "env" or None. The key
+        itself is never handed back - the field only ever takes a new one."""
+        self._default_model = default_model
+        if not self._models_loaded:
+            # Until OpenRouter's list arrives, the choice is between these two.
+            self._set_items(list(dict.fromkeys([model, default_model])))
+        self._select_model(model)
+        self._show_model_hint()
+
+        self.key_input.clear()
+        if key_source == "user":
+            self.key_input.setPlaceholderText("Saved - paste a new key to replace it")
+            self.key_status.setText("Using your own key, stored encrypted.")
+        elif key_source == "env":
+            self.key_input.setPlaceholderText("sk-or-v1-…")
+            self.key_status.setText("Using OPENROUTER_API_KEY from .env. Paste a key to use "
+                                    "your own instead.")
+        else:
+            self.key_input.setPlaceholderText("sk-or-v1-…")
+            self.key_status.setText("No key yet - the assistant cannot answer until you paste "
+                                    "one here or set OPENROUTER_API_KEY in .env.")
+        self.remove_key_button.setVisible(key_source == "user")
+        self.error.hide()
+
+    def show_models(self, models: list[str]):
+        self._models_loaded = True
+        self._models_unavailable = False
+        current = self.model_input.currentText()
+        self._set_items(models)
+        self._select_model(current)
+        self._show_model_hint()
+
+    def show_models_unavailable(self):
+        self._models_unavailable = True
+        self._show_model_hint()
+
+    def _set_items(self, models: list[str]):
+        self.model_input.clear()
+        self.model_input.addItems(models)
+
+    def _select_model(self, model: str):
+        # On an editable box setCurrentText only changes the text, and the
+        # list would open at its top rather than at this model.
+        index = self.model_input.findText(model)
+        if index >= 0:
+            self.model_input.setCurrentIndex(index)
+        else:
+            self.model_input.setEditText(model)
+
+    def _show_model_hint(self):
+        if self._models_unavailable:
+            text = (f"Default: {self._default_model}. OpenRouter's list could not be loaded - "
+                    "type a model id from openrouter.ai/models.")
+        else:
+            text = f"Default: {self._default_model}. Only models that can use tools are listed."
+        self.model_hint.setText(text)
+
+    def show_error(self, text: str):
+        self.saved_notice.hide()
+        self.error.setText(text)
+        self.error.show()
+
+    def show_saved(self):
+        self.saved_notice.show()
+        QTimer.singleShot(2500, self.saved_notice.hide)
+
+    def _submit(self):
+        self.error.hide()
+        self.saved_notice.hide()
+        self.save_requested.emit(self.model_input.currentText(), self.key_input.text())
 
 
 class ServerList(QWidget):

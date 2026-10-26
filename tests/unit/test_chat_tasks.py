@@ -70,13 +70,17 @@ class FakeWorker(QObject):
     error = Signal(str)
     stopped = Signal()
     started = []
+    instances = []
 
     def __init__(self, model, chat_id, user_input, mcp_registry, approve_tool,
-                 tools_approval_policy=None, workspace=None):
+                 tools_approval_policy=None, workspace=None, llm_model=None, api_key=None):
         super().__init__()
         self.chat_id = chat_id
         self.approve_tool = approve_tool
+        self.llm_model = llm_model
+        self.api_key = api_key
         FakeWorker.started.append(chat_id)
+        FakeWorker.instances.append(self)
 
     async def run(self):
         try:
@@ -87,10 +91,12 @@ class FakeWorker(QObject):
             raise
 
 
-def make_controller():
+def make_controller(model_settings=None):
     FakeWorker.started = []
+    FakeWorker.instances = []
     view = FakeView()
-    controller = AIClientController(model=None, view=view, mcp_registry=None)
+    controller = AIClientController(model=None, view=view, mcp_registry=None,
+                                    model_settings=model_settings)
     return controller, view
 
 

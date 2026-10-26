@@ -26,6 +26,8 @@ class AIWorker(QObject):
         approve_tool: ApproveToolFn | None,
         tools_approval_policy: ToolsApprovalPolicy | None = None,
         workspace: str | None = None,
+        llm_model: str | None = None,
+        api_key: str | None = None,
     ):
         super().__init__()
         self._model = model
@@ -37,6 +39,9 @@ class AIWorker(QObject):
         # Taken when the task starts: picking another folder for the chat
         # mid-task must not move the files it is working on.
         self.workspace = workspace
+        # From Settings > Model; None falls back to .env.
+        self.llm_model = llm_model
+        self.api_key = api_key
 
     async def run(self):
         message_id = None
@@ -50,6 +55,8 @@ class AIWorker(QObject):
                 approve_tool=self.approve_tool,
                 tools_approval_policy=self.tools_approval_policy or ToolsApprovalPolicy(),
                 workspace=self.workspace,
+                model=self.llm_model,
+                api_key=self.api_key,
             )
 
             message_id = self._model.record_input(

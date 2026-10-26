@@ -55,8 +55,17 @@ class User_DB:
                         last_active TEXT,
                         language TEXT DEFAULT "eng",
                         history_enabled INTEGER,
-                        is_active INTEGER
+                        is_active INTEGER,
+                        llm_model TEXT
             )""")
+
+            # Added after the table first shipped. NULL means the default
+            # LLM_MODEL, so changing that in .env moves every user who never
+            # picked a model of their own.
+            existing = {row[1] for row in cursor.execute('PRAGMA table_info(users)')}
+            if 'llm_model' not in existing:
+                cursor.execute('ALTER TABLE users ADD COLUMN llm_model TEXT')
+
             conn.commit()
 
     def add_user(self, username, email, password):
@@ -107,6 +116,23 @@ class User_DB:
                 'SELECT * FROM users WHERE email = ?', (email,))
             result = cursor.fetchone()
             return dict(result) if result else None
+
+    def get_llm_model(self, user_id):
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT llm_model FROM users WHERE id = ?', (user_id,))
+            row = cursor.fetchone()
+        return row[0] if row else None
+
+    def set_llm_model(self, user_id, llm_model):
+        """None puts the user back on the default model."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                'UPDATE users SET llm_model = ? WHERE id = ?', (llm_model, user_id))
+            updated = cursor.rowcount
+            conn.commit()
+        return updated > 0
 
 
 class Chat_DB:

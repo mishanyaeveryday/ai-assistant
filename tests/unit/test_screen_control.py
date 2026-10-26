@@ -10,8 +10,9 @@ import io
 import os
 import sys
 from types import SimpleNamespace
-from unittest.mock import call, patch
+from unittest.mock import AsyncMock, call, patch
 
+import openai
 import pytest
 from PIL import Image
 
@@ -82,11 +83,16 @@ class FakeVision:
         return Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1])))
 
 
-def find(target, answer, screen_access=None):
-    vision = FakeVision(answer)
+MODEL = "someone/picked-in-settings"
+
+
+def find(target, answer, screen_access=None, sees_images=True):
+    vision = answer if isinstance(answer, FakeVision) else FakeVision(answer)
     with patch.object(screen_server.ImageGrab, "grab", return_value=Image.new("RGB", CAPTURE)) as grab, \
             patch.object(screen_server.pyautogui, "size", return_value=SCREEN), \
             patch.object(screen_server, "missing_screen_access", return_value=screen_access), \
+            patch.object(screen_server, "LLM_MODEL", MODEL), \
+            patch.object(screen_server, "_sees_images", AsyncMock(return_value=sees_images)), \
             patch.object(screen_server, "_llm", return_value=vision):
         result = asyncio.run(screen_server.find_on_screen(target))
     vision.grabbed = grab.called
@@ -97,6 +103,8 @@ def test_find_on_screen_answers_in_click_coordinates():
     result, vision = find("the Send button", BOX)
 
     assert result == "Found 'the Send button' at x=1058, y=147."
+    # The model picked in Settings looks at the screen too.
+    assert vision.request["model"] == MODEL
     assert "the Send button" in vision.request["messages"][0]["content"][1]["text"]
     # Scaled down to the size clicks work in before it is sent.
     assert vision.sent_image().size == SCREEN
@@ -120,6 +128,53 @@ def test_find_on_screen_says_when_it_may_not_see_the_screen():
     assert result == "no Screen Recording"
     assert not vision.grabbed
     assert vision.request is None
+
+
+def test_a_model_without_vision_is_not_sent_the_screen_but_warns():
+    result, vision = find("the Send button", BOX, sees_images=False)
+
+    assert f"'{MODEL}' cannot see images" in result
+    assert "Settings > Model" in result
+    assert vision.request is None
+
+
+class RefusingVision(FakeVision):
+    """A model OpenRouter does not list, which turns the image down."""
+
+    async def _create(self, **request):
+        import httpx2
+        self.request = request
+        response = httpx2.Response(404, request=httpx2.Request(
+            "POST", "https://openrouter.ai/api/v1/chat/completions"))
+        raise openai.NotFoundError("No endpoints found that support image input",
+                                   response=response, body=None)
+
+
+def test_a_refused_image_gives_the_same_warning():
+    result, vision = find("the Send button", RefusingVision(BOX), sees_images=None)
+
+    assert vision.request is not None
+    assert f"'{MODEL}' cannot see images" in result
+
+
+def test_whether_the_model_sees_images_is_asked_once():
+    fetch = AsyncMock(return_value=[
+        {"id": MODEL, "architecture": {"input_modalities": ["text"]}}])
+    with patch.object(screen_server, "LLM_MODEL", MODEL), \
+            patch.object(screen_server, "fetch_models", fetch), \
+            patch.object(screen_server, "_sees_images_answer", None):
+        assert asyncio.run(screen_server._sees_images()) is False
+        assert asyncio.run(screen_server._sees_images()) is False
+    assert fetch.await_count == 1
+
+
+def test_no_connection_leaves_it_open_and_asks_again():
+    fetch = AsyncMock(side_effect=OSError("offline"))
+    with patch.object(screen_server, "fetch_models", fetch), \
+            patch.object(screen_server, "_sees_images_answer", None):
+        assert asyncio.run(screen_server._sees_images()) is None
+        assert asyncio.run(screen_server._sees_images()) is None
+    assert fetch.await_count == 2
 
 
 # --- input tools ---

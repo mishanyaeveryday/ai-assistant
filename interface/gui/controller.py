@@ -1,7 +1,8 @@
 from PySide6.QtCore import Signal, QObject
 from core.models import User, MCPServer
-from interface.gui.view import RegistrationPage, LoginPage, ChatPage, SettingsPage, AppWindow, MCPServersSection, ScreenControlSection
-from core.services import AuthService, ChatService, MessageService, AIClientService, MCPServerService, is_screen_control, needs_consent
+from interface.gui.view import RegistrationPage, LoginPage, ChatPage, SettingsPage, AppWindow, MCPServersSection, ScreenControlSection, ModelSection
+from core.services import AuthService, ChatService, MessageService, AIClientService, MCPServerService, ModelSettingsService, is_screen_control, needs_consent
+from core.openrouter import fetch_tool_models
 from interface.gui.worker import AIWorker, STOPPED_OUTPUT
 from interface.gui.mcp_tools_approval import HumanToolApproval
 from agent.tools_policy import ToolsApprovalPolicy
@@ -220,7 +221,8 @@ class AIClientController(QObject):
     that chat only, and its approval cards come back when it is reopened."""
 
     def __init__(self, model: AIClientService, view: ChatPage, mcp_registry,
-                 chat_model: ChatService | None = None):
+                 chat_model: ChatService | None = None,
+                 model_settings: ModelSettingsService | None = None):
         super().__init__()
         self._model = model
         self._view = view
@@ -228,6 +230,11 @@ class AIClientController(QObject):
         # Looks up each chat's workspace folder; without it every task works
         # in the default one.
         self._chat_model = chat_model
+        # The model and key of the logged-in user, read on each prompt so a
+        # change in settings counts from the next one. Without it, or before a
+        # login, the ones in .env are used.
+        self._model_settings = model_settings
+        self._user_id: str | None = None
         self._tool_approval = HumanToolApproval(view=self._view)
         self._approval_policy = ToolsApprovalPolicy()
         # Kept so the task can be stopped; asyncio itself only holds a weak
@@ -241,14 +248,24 @@ class AIClientController(QObject):
         # A task left running would keep acting after logout - and against the
         # next user's servers and secrets once they log in.
         self._view.logout_requested.connect(self.stop)
+        self._view.logout_requested.connect(lambda: self.set_user(None))
 
     @property
     def is_running(self) -> bool:
         return self._task is not None and not self._task.done()
 
+    def set_user(self, user_id: str | None):
+        """Whose model and key the prompts use - this controller outlives a
+        login, and the next user must not get the previous one's key."""
+        self._user_id = user_id
+
     def handle_prompt(self, chat_id, user_input):
         if self.is_running:
             return
+        if self._model_settings is not None and self._user_id is not None:
+            llm_model, api_key = self._model_settings.llm_config(self._user_id)
+        else:
+            llm_model, api_key = None, None
         self._task_chat_id = chat_id
         self._view.set_busy_chat(chat_id)
 
@@ -261,6 +278,8 @@ class AIClientController(QObject):
             tools_approval_policy=self._approval_policy,
             workspace=(self._chat_model.get_workspace(chat_id)
                        if self._chat_model is not None else None),
+            llm_model=llm_model,
+            api_key=api_key,
         )
 
         self.worker.finished.connect(
@@ -717,5 +736,118 @@ class MCPServersController(QObject):
 
     def _stop_server(self, server_id: str):
         task = asyncio.create_task(self._mcp_registry.stop_server(server_id))
+        self._stop_tasks.add(task)
+        task.add_done_callback(self._stop_tasks.discard)
+
+
+class ModelSettingsController(QObject):
+    """Drives the Model section of settings. Built on every login, like
+    MCPServersController, since the model and key it shows are one user's.
+    What is saved counts from the next prompt."""
+
+    def __init__(self, user: User, model: ModelSettingsService, view: ModelSection,
+                 mcp_registry=None, fetch_models=fetch_tool_models):
+        super().__init__()
+        self._user = user
+        self._model = model
+        self._view = view
+        # Restarts the servers that call OpenRouter when the key or model
+        # changes, so they pick up the new ones.
+        self._mcp_registry = mcp_registry
+        self._fetch_models = fetch_models
+        self._active = True
+        # OpenRouter's tool-capable models, once loaded; None until then, or
+        # if loading failed - any id is accepted in that case.
+        self._models: list[str] | None = None
+        # asyncio only holds weak references to tasks, so they are kept here.
+        self._models_task: asyncio.Task | None = None
+        self._stop_tasks: set[asyncio.Task] = set()
+
+        self._view.opened.connect(self.refresh)
+        self._view.save_requested.connect(self.handle_save)
+        self._view.remove_key_requested.connect(self.handle_remove_key)
+
+    def disconnect_view(self):
+        """Lets go of the (long-lived) view before the next login builds a new
+        controller, so a Save is not handled twice."""
+        self._active = False
+        self._view.opened.disconnect(self.refresh)
+        self._view.save_requested.disconnect(self.handle_save)
+        self._view.remove_key_requested.disconnect(self.handle_remove_key)
+        if self._models_task is not None:
+            self._models_task.cancel()
+
+    def refresh(self):
+        if not self._active:
+            return
+        self._view.show_settings(
+            model=self._model.get_model(self._user.id),
+            default_model=self._model.default_model(),
+            key_source=self._model.key_source(self._user.id))
+        if self._models is None and self._models_task is None:
+            # Loaded when the section is first shown rather than at login; a
+            # failed attempt is tried again the next time it is.
+            self._models_task = asyncio.create_task(self._load_models())
+
+    async def _load_models(self):
+        try:
+            models = await self._fetch_models()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(f"[Model] Could not load OpenRouter's model list: {e}")
+            if self._active:
+                self._view.show_models_unavailable()
+            return
+        finally:
+            self._models_task = None
+        self._models = models
+        if self._active:
+            self._view.show_models(models)
+
+    def _check_model(self, model: str) -> str | None:
+        """Why this model id cannot be saved, or None if it can."""
+        if not model:
+            return "Pick a model."
+        if "/" not in model or any(c.isspace() for c in model):
+            return (f'"{model}" is not an OpenRouter model id - they look like '
+                    f'{self._model.default_model()}.')
+        # What is already in use stays allowed, even if OpenRouter no longer
+        # lists it: saving just a new key must not fail over the model.
+        if (self._models is not None and model not in self._models
+                and model not in (self._model.get_model(self._user.id),
+                                  self._model.default_model())):
+            return f'OpenRouter has no model "{model}" that can use tools - pick one from the list.'
+        return None
+
+    def handle_save(self, model: str, key: str):
+        model, key = model.strip(), key.strip()
+        error = self._check_model(model)
+        if error is None and any(c.isspace() for c in key):
+            error = "The key cannot contain spaces - copy it again from openrouter.ai/keys."
+        if error is not None:
+            self._view.show_error(error)
+            return
+
+        before = self._model.llm_config(self._user.id)
+        self._model.set_model(self._user.id, model)
+        if key:
+            self._model.set_api_key(self._user.id, key)
+        self._restart_servers_if_changed(before)
+        self.refresh()
+        self._view.show_saved()
+
+    def handle_remove_key(self):
+        before = self._model.llm_config(self._user.id)
+        self._model.remove_api_key(self._user.id)
+        self._restart_servers_if_changed(before)
+        self.refresh()
+
+    def _restart_servers_if_changed(self, before: tuple):
+        # Only on a change: a screen task running right now would lose its
+        # server in the middle of a call.
+        if self._mcp_registry is None or self._model.llm_config(self._user.id) == before:
+            return
+        task = asyncio.create_task(self._mcp_registry.stop_openrouter_servers(self._user.id))
         self._stop_tasks.add(task)
         task.add_done_callback(self._stop_tasks.discard)

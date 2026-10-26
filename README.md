@@ -6,7 +6,7 @@ Desktopowa aplikacja z graficznym interfejsem (PySide6), umożliwiająca rozmow�
 
 - **Rejestracja i logowanie** — konta użytkowników, hasła hashowane (bcrypt)
 - **Wiele czatów** — tworzenie czatów, przełączanie między nimi, historia wiadomości
-- **Asystent AI** — odpowiedzi generowane przez dowolny model z [OpenRouter](https://openrouter.ai/models) (domyślnie Gemini Flash), z pamięcią kontekstu w obrębie czatu
+- **Asystent AI** — odpowiedzi generowane przez dowolny model z [OpenRouter](https://openrouter.ai/models) (domyślnie `qwen/qwen3.8-flash`), z pamięcią kontekstu w obrębie czatu. W **Ustawieniach → Model** każdy użytkownik może wybrać model i wkleić własny klucz OpenRouter (przechowywany zaszyfrowany); bez nich używane są `LLM_MODEL` i `OPENROUTER_API_KEY` z `.env`
 - **Narzędzia MCP** — wyszukiwanie w internecie (Tavily), operacje na plikach, terminal, zrzuty ekranu, sterowanie myszą/klawiaturą oraz **sandbox kodu Python w Dockerze** — wszystko przez serwery MCP
 - **Potwierdzanie narzędzi** — narzędzia działające na komputerze (zapis/usuwanie plików, terminal, kod Python) oraz wszystkie narzędzia serwerów dodanych przez użytkownika pytają o zgodę w czacie. W **Ustawieniach → MCP servers → Tools** każdy użytkownik może pozwolić wybranym narzędziom działać bez pytania
 - **Sterowanie ekranem** — zrzuty ekranu, mysz i klawiatura są domyślnie wyłączone. Włącza je zgoda w **Ustawieniach → Screen control**: te kroki nie mogą pytać o każdy z osobna (karta w czacie zabrałaby fokus aplikacji, w której asystent pracuje), więc po zgodzie działają bez pytania. Przerwanie: **Stop** w czacie albo kursor myszy w rogu ekranu — wtedy mysz i klawiatura pozostają zablokowane, dopóki nie odznaczysz i ponownie nie zaznaczysz zgody. macOS wymaga też uprawnień **Accessibility** i **Screen Recording** dla aplikacji, z której uruchamiasz asystenta
@@ -71,7 +71,7 @@ Otwórz **`.env`** w edytorze i ustaw przynajmniej:
 
 | Zmienna            | Opis                                                |
 |--------------------|-----------------------------------------------------|
-| `OPENROUTER_API_KEY` | klucz z [OpenRouter](https://openrouter.ai/keys); modele płatne wymagają doładowania kredytów |
+| `OPENROUTER_API_KEY` | klucz z [OpenRouter](https://openrouter.ai/keys); modele płatne wymagają doładowania kredytów. Można go też podać w aplikacji, w **Ustawieniach → Model** |
 | `TAVILY_API_KEY`   | klucz z [Tavily](https://tavily.com/) — **wymagany**, inaczej `config/settings.py` rzuci `ValueError` przy starcie |
 
 `DOCKER_CONTAINER` zostaw puste lub uzupełnij dopiero po zbudowaniu obrazu Dockera — patrz **[Kontener Docker (sandbox kodu Python)](#kontener-docker-sandbox-kodu-python)** niżej w README.
@@ -169,18 +169,16 @@ OPENROUTER_API_KEY=...
 TAVILY_API_KEY=...
 
 # Opcjonalne — modele z OpenRouter
-LLM_MODEL=google/gemini-3.8-flash
+LLM_MODEL=qwen/qwen3.8-flash
 LLM_FALLBACK_MODELS=
-VISION_MODEL=google/gemini-3.8-flash
 
 # Opcjonalne — nazwa lub tag obrazu Dockera dla sandboxa kodu (patrz „Kontener Docker”)
 DOCKER_CONTAINER=...
 ```
 
-- **OPENROUTER_API_KEY** — [OpenRouter](https://openrouter.ai/keys); jeden klucz daje dostęp do modeli wielu dostawców (Google, OpenAI, Anthropic i in.)
-- **LLM_MODEL** — identyfikator modelu z [listy OpenRouter](https://openrouter.ai/models), który obsługuje narzędzia (tools); domyślnie `google/gemini-3.8-flash`
+- **OPENROUTER_API_KEY** — [OpenRouter](https://openrouter.ai/keys); jeden klucz daje dostęp do modeli wielu dostawców (Google, OpenAI, Anthropic i in.). Użytkownik, który wkleił własny klucz w **Ustawieniach → Model**, używa swojego; ten z `.env` jest dla pozostałych. Dotyczy to też narzędzi `read_image` i `find_on_screen`
+- **LLM_MODEL** — identyfikator modelu z [listy OpenRouter](https://openrouter.ai/models), który obsługuje narzędzia (tools); domyślnie `qwen/qwen3.8-flash`. Model wybrany w **Ustawieniach → Model** ma pierwszeństwo. Ten sam model ogląda obrazy i zrzuty ekranu (`read_image`, `find_on_screen`); jeśli nie przyjmuje obrazów, narzędzia nie wysyłają zapytania, a asystent ostrzega, że model nie ma vision
 - **LLM_FALLBACK_MODELS** — modele (oddzielone przecinkami), na które OpenRouter przełączy się, gdy `LLM_MODEL` zwróci błąd; domyślnie wyłączone
-- **VISION_MODEL** — model, który ogląda obrazy i zrzuty ekranu (`read_image`, `find_on_screen`); musi obsługiwać obrazy na wejściu
 - **TAVILY_API_KEY** — [Tavily](https://tavily.com/) — zmienna jest wymagana przez `config/settings.py`; bez niej aplikacja nie wystartuje
 - **DOCKER_CONTAINER** — nazwa/tag zbudowanego obrazu Dockera, którego używa narzędzie MCP **`run_python_code`** (`mcp_tools/code_interpreter/server.py`) do uruchamiania kodu Python w sandboxie. Bez tej zmiennej narzędzie jest zarejestrowane w GUI, ale przy próbie użycia zwróci błąd — patrz **[Kontener Docker (sandbox kodu Python)](#kontener-docker-sandbox-kodu-python)**
 

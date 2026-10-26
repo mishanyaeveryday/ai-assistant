@@ -272,6 +272,43 @@ QLineEdit:focus {
     border: 1px solid #3d5afe;
 }
 
+QComboBox {
+    border: 1px solid #dcdfe6;
+    border-radius: 8px;
+    padding: 8px;
+    background-color: #ffffff;
+    selection-background-color: #a6b3ff;
+}
+
+QComboBox:focus {
+    border: 1px solid #3d5afe;
+}
+
+/* The text field of an editable box - the box itself draws the border. */
+QComboBox QLineEdit {
+    border: none;
+    padding: 0;
+    background: transparent;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 28px;
+}
+
+QComboBox::down-arrow {
+    image: url(icons:chevron-down.svg);
+    width: 14px;
+    height: 14px;
+}
+
+QComboBox QAbstractItemView {
+    border: 1px solid #dcdfe6;
+    background-color: #ffffff;
+    selection-background-color: #e8ecff;
+    selection-color: #1f2330;
+}
+
 QPlainTextEdit#form_text {
     border: 1px solid #dcdfe6;
     border-radius: 8px;

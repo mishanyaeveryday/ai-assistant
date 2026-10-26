@@ -1,7 +1,8 @@
 import bcrypt
 from datetime import datetime
 from pathlib import Path
-from config.settings import BUILTIN_MCP_SERVERS, SCREEN_CONTROL_SERVERS, WORKSPACE_DIR
+from config.settings import (BUILTIN_MCP_SERVERS, LLM_MODEL, OPENROUTER_API_KEY,
+                             OPENROUTER_SERVERS, SCREEN_CONTROL_SERVERS, WORKSPACE_DIR)
 from core.crypto import SecretBox, referenced_names, scrub, secret_ref, substitute
 from core.models import User, Chat, MessageHistory, MCPServer
 from db.database import User_DB, Chat_DB, MessageHistory_DB, MCPServer_DB, Secret_DB
@@ -140,6 +141,61 @@ class SecretService:
         return substitute(value, lambda name: self.get_secret(user_id, name))
 
 
+# The user's own OpenRouter key in the secrets table. No dot in it, so it
+# never collides with the secrets of a server (see server_secret_name).
+OPENROUTER_KEY_SECRET = "openrouter_api_key"
+
+
+class ModelSettingsService:
+    """The model the assistant answers with and the OpenRouter key it uses,
+    per user. A user who has set neither in Settings gets the ones from .env,
+    and the model then falls back to the app's default."""
+
+    KEY_FROM_USER = "user"
+    KEY_FROM_ENV = "env"
+
+    def __init__(self, user_db: User_DB, secret_service: SecretService):
+        self.user_db = user_db
+        self.secret_service = secret_service
+
+    @staticmethod
+    def default_model() -> str:
+        return LLM_MODEL
+
+    def get_model(self, user_id: str) -> str:
+        return self.user_db.get_llm_model(user_id) or self.default_model()
+
+    def set_model(self, user_id: str, model: str | None) -> bool:
+        """None goes back to the default. The default itself is stored as None
+        too, so the user keeps following LLM_MODEL if that is changed later."""
+        model = (model or "").strip() or None
+        if model == self.default_model():
+            model = None
+        return self.user_db.set_llm_model(user_id, model)
+
+    def has_own_key(self, user_id: str) -> bool:
+        # By name, so the key is not decrypted just to say it is there.
+        return OPENROUTER_KEY_SECRET in self.secret_service.list_names(user_id)
+
+    def set_api_key(self, user_id: str, key: str) -> None:
+        self.secret_service.set_secret(user_id, OPENROUTER_KEY_SECRET, key.strip())
+
+    def remove_api_key(self, user_id: str) -> bool:
+        return self.secret_service.delete_secret(user_id, OPENROUTER_KEY_SECRET)
+
+    def key_source(self, user_id: str) -> str | None:
+        """Where the key in use comes from: KEY_FROM_USER, KEY_FROM_ENV, or
+        None when there is none at all."""
+        if self.has_own_key(user_id):
+            return self.KEY_FROM_USER
+        return self.KEY_FROM_ENV if OPENROUTER_API_KEY else None
+
+    def llm_config(self, user_id: str) -> tuple[str, str | None]:
+        """The model and the key for this user's next prompt."""
+        key = self.secret_service.get_secret(user_id, OPENROUTER_KEY_SECRET)
+        return self.get_model(user_id), key or OPENROUTER_API_KEY
+
+
 def server_secret_name(server_name: str, kind: str, key: str) -> str:
     """Name of the secret holding one env/header value of a server the user
     added. Server names cannot contain a dot, so these never collide between
@@ -149,6 +205,12 @@ def server_secret_name(server_name: str, kind: str, key: str) -> str:
 
 def is_screen_control(server: MCPServer) -> bool:
     return server.is_builtin and server.name in SCREEN_CONTROL_SERVERS
+
+
+def uses_openrouter(server: MCPServer) -> bool:
+    """A built-in server that calls OpenRouter itself, and so is started with
+    the user's key and model."""
+    return server.is_builtin and server.name in OPENROUTER_SERVERS
 
 
 def needs_consent(server: MCPServer) -> bool:

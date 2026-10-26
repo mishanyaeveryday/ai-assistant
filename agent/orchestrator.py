@@ -65,12 +65,14 @@ class AIClient:
         mcp_registry,
         tools_approval_policy: ToolsApprovalPolicy | None = None,
         approve_tool: ApproveToolFn | None = None,
-        model=LLM_MODEL,
+        model: str | None = None,
         workspace: str | None = None,
+        api_key: str | None = None,
     ):
+        # The user's choices from Settings when given, else the ones in .env.
         self.llm = LLMClient(
-            llm_model=model,
-            api_key=OPENROUTER_API_KEY,
+            llm_model=model or LLM_MODEL,
+            api_key=api_key or OPENROUTER_API_KEY,
             base_url=OPENROUTER_BASE_URL,
             fallback_models=LLM_FALLBACK_MODELS,
         )

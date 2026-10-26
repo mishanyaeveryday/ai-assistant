@@ -14,7 +14,8 @@ def _decode_json(raw, fallback):
 
 class User:
     def __init__(self, id, username, email, password, type_of_subscription,
-                 os_type, created_at, last_active, language, history_enabled, is_active):
+                 os_type, created_at, last_active, language, history_enabled, is_active,
+                 llm_model=None):
         self.id = id
         self.username = username
         self.email = email
@@ -26,6 +27,8 @@ class User:
         self.language = language
         self.history_enabled = history_enabled
         self.is_active = is_active
+        # The model picked in Settings, or None for the default one.
+        self.llm_model = llm_model
 
     @classmethod
     def from_db_row(cls, row: dict):
@@ -40,7 +43,8 @@ class User:
             last_active=row.get('last_active'),
             language=row.get('language'),
             history_enabled=row.get('history_enabled'),
-            is_active=row.get('is_active')
+            is_active=row.get('is_active'),
+            llm_model=row.get('llm_model')
         )
 
 

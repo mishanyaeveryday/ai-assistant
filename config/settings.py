@@ -18,12 +18,16 @@ GROQ_API_KEY = os.getenv('GROQ_API_KEY')
 
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
+# Used by a user who has not saved a key of their own in Settings > Model.
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-# Any model id from https://openrouter.ai/models that supports tools.
-LLM_MODEL = os.getenv('LLM_MODEL', "google/gemini-3.8-flash")
+# Any model id from https://openrouter.ai/models that supports tools. A user
+# who picks a model in Settings > Model gets theirs instead. read_image and
+# find_on_screen look at images with the same model; one that cannot see
+# images makes them say so.
+LLM_MODEL = os.getenv('LLM_MODEL', "qwen/qwen3.8-flash")
 
 # Models OpenRouter switches to, in order, when LLM_MODEL fails - e.g.
 # LLM_FALLBACK_MODELS=google/gemini-3.7-flash,openai/gpt-5-mini. Off by
@@ -32,10 +36,6 @@ LLM_MODEL = os.getenv('LLM_MODEL', "google/gemini-3.8-flash")
 # retried by OpenRouter on another provider of the same model.
 LLM_FALLBACK_MODELS = [m.strip() for m in os.getenv('LLM_FALLBACK_MODELS', '').split(',')
                        if m.strip()]
-
-# Looks at images and screenshots for read_image and find_on_screen; it must
-# accept image input.
-VISION_MODEL = os.getenv('VISION_MODEL', "google/gemini-3.8-flash")
 
 # The MCP servers that ship with the app. They are seeded into the
 # mcp_servers table for every user and connected at startup, so this tuple is
@@ -67,6 +67,12 @@ BUILTIN_MCP_SERVERS: tuple[dict, ...] = (
 # they cannot ask - they stay off until the user agrees, in Settings, to them
 # running without asking.
 SCREEN_CONTROL_SERVERS: frozenset[str] = frozenset({"screenshot_command", "input_control"})
+
+# Built-in servers that call OpenRouter themselves - read_image and
+# find_on_screen look at images through the model. They are started with the
+# user's key and model from Settings > Model, like the chat; no other server
+# is handed the key.
+OPENROUTER_SERVERS: frozenset[str] = frozenset({"screenshot_command"})
 
 TOOLS_REQUIRING_APPROVAL: frozenset[str] = frozenset(
     {"terminal_command", "write_file", "delete_file", "append_file", "delete_text", "make_screenshot",
