@@ -190,10 +190,14 @@ class ModelSettingsService:
             return self.KEY_FROM_USER
         return self.KEY_FROM_ENV if OPENROUTER_API_KEY else None
 
+    def get_api_key(self, user_id: str) -> str | None:
+        """The key this user's requests go out with."""
+        return (self.secret_service.get_secret(user_id, OPENROUTER_KEY_SECRET)
+                or OPENROUTER_API_KEY)
+
     def llm_config(self, user_id: str) -> tuple[str, str | None]:
         """The model and the key for this user's next prompt."""
-        key = self.secret_service.get_secret(user_id, OPENROUTER_KEY_SECRET)
-        return self.get_model(user_id), key or OPENROUTER_API_KEY
+        return self.get_model(user_id), self.get_api_key(user_id)
 
 
 def server_secret_name(server_name: str, kind: str, key: str) -> str:
@@ -209,7 +213,7 @@ def is_screen_control(server: MCPServer) -> bool:
 
 def uses_openrouter(server: MCPServer) -> bool:
     """A built-in server that calls OpenRouter itself, and so is started with
-    the user's key and model."""
+    the user's key."""
     return server.is_builtin and server.name in OPENROUTER_SERVERS
 
 

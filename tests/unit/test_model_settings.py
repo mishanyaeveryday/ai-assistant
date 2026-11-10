@@ -210,7 +210,7 @@ def test_which_models_see_images():
     assert accepts_images(models, "not/listed") is None
 
 
-# --- The server that looks at images gets the same key and model ---
+# --- The server that looks at images gets the same key ---
 
 class FakeClient:
     """Stands in for MCPClient; keeps what each server would be started with."""
@@ -248,15 +248,15 @@ def start(registry, *tools):
     asyncio.run(calls())
 
 
-def test_screen_server_is_started_with_the_users_key_and_model(service, alice, db_path):
+def test_screen_server_is_started_with_the_users_key(service, alice, db_path):
     service.set_model(alice, "openai/gpt-5-mini")
     service.set_api_key(alice, OWN_KEY)
     registry, client, _ = make_registry(service, alice, db_path)
 
     start(registry, "screenshot_command_tool", "terminal_command_tool")
 
-    assert client.specs["screenshot_command"].env == {
-        "LLM_MODEL": "openai/gpt-5-mini", "OPENROUTER_API_KEY": OWN_KEY}
+    # Not the chat model: images are looked at with VISION_MODEL from .env.
+    assert client.specs["screenshot_command"].env == {"OPENROUTER_API_KEY": OWN_KEY}
     # A server running shell commands would hand it to every command.
     assert "OPENROUTER_API_KEY" not in (client.specs["terminal_command"].env or {})
 
@@ -265,12 +265,11 @@ def test_screen_server_gets_the_env_key_or_none(service, alice, db_path, monkeyp
     registry, client, _ = make_registry(service, alice, db_path)
 
     start(registry, "screenshot_command_tool")
-    assert client.specs["screenshot_command"].env == {
-        "LLM_MODEL": DEFAULT_MODEL, "OPENROUTER_API_KEY": ENV_KEY}
+    assert client.specs["screenshot_command"].env == {"OPENROUTER_API_KEY": ENV_KEY}
 
     monkeypatch.setattr(services, "OPENROUTER_API_KEY", None)
     start(registry, "screenshot_command_tool")
-    assert client.specs["screenshot_command"].env == {"LLM_MODEL": DEFAULT_MODEL}
+    assert not client.specs["screenshot_command"].env
 
 
 def test_stopping_openrouter_servers_leaves_the_rest_running(service, alice, db_path):
@@ -449,13 +448,14 @@ def test_remove_key(service, alice):
 
 
 @pytest.mark.parametrize("model, key, restarted", [
-    ("openai/gpt-5-mini", "", True),
     (DEFAULT_MODEL, OWN_KEY, True),
+    # The chat model is not the one it looks at images with.
+    ("openai/gpt-5-mini", "", False),
     # Nothing changed: a screen task running now keeps its server.
     (DEFAULT_MODEL, "", False),
 ])
-def test_screen_server_restarts_only_when_key_or_model_changes(service, alice, model, key,
-                                                               restarted):
+def test_screen_server_restarts_only_when_the_key_changes(service, alice, model, key,
+                                                          restarted):
     registry = FakeRegistry()
 
     async def scenario():

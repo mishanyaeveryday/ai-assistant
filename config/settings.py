@@ -24,10 +24,14 @@ OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # Any model id from https://openrouter.ai/models that supports tools. A user
-# who picks a model in Settings > Model gets theirs instead. read_image and
-# find_on_screen look at images with the same model; one that cannot see
-# images makes them say so.
+# who picks a model in Settings > Model gets theirs instead.
 LLM_MODEL = os.getenv('LLM_MODEL', "qwen/qwen3.8-flash")
+
+# Looks at images and screenshots for read_image and find_on_screen, whatever
+# model answers in the chat: find_on_screen asks for the box format Gemini
+# models are trained on, and other models miss their clicks. It must accept
+# image input - one that does not makes those tools warn instead.
+VISION_MODEL = os.getenv('VISION_MODEL', "google/gemini-3.8-flash")
 
 # Models OpenRouter switches to, in order, when LLM_MODEL fails - e.g.
 # LLM_FALLBACK_MODELS=google/gemini-3.7-flash,openai/gpt-5-mini. Off by
@@ -69,9 +73,9 @@ BUILTIN_MCP_SERVERS: tuple[dict, ...] = (
 SCREEN_CONTROL_SERVERS: frozenset[str] = frozenset({"screenshot_command", "input_control"})
 
 # Built-in servers that call OpenRouter themselves - read_image and
-# find_on_screen look at images through the model. They are started with the
-# user's key and model from Settings > Model, like the chat; no other server
-# is handed the key.
+# find_on_screen look at images through VISION_MODEL. They are started with
+# the user's key from Settings > Model, like the chat; no other server is
+# handed the key.
 OPENROUTER_SERVERS: frozenset[str] = frozenset({"screenshot_command"})
 
 TOOLS_REQUIRING_APPROVAL: frozenset[str] = frozenset(

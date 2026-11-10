@@ -751,8 +751,8 @@ class ModelSettingsController(QObject):
         self._user = user
         self._model = model
         self._view = view
-        # Restarts the servers that call OpenRouter when the key or model
-        # changes, so they pick up the new ones.
+        # Restarts the servers that call OpenRouter when the key changes, so
+        # they pick up the new one.
         self._mcp_registry = mcp_registry
         self._fetch_models = fetch_models
         self._active = True
@@ -829,24 +829,25 @@ class ModelSettingsController(QObject):
             self._view.show_error(error)
             return
 
-        before = self._model.llm_config(self._user.id)
+        key_before = self._model.get_api_key(self._user.id)
         self._model.set_model(self._user.id, model)
         if key:
             self._model.set_api_key(self._user.id, key)
-        self._restart_servers_if_changed(before)
+        self._restart_servers_if_key_changed(key_before)
         self.refresh()
         self._view.show_saved()
 
     def handle_remove_key(self):
-        before = self._model.llm_config(self._user.id)
+        key_before = self._model.get_api_key(self._user.id)
         self._model.remove_api_key(self._user.id)
-        self._restart_servers_if_changed(before)
+        self._restart_servers_if_key_changed(key_before)
         self.refresh()
 
-    def _restart_servers_if_changed(self, before: tuple):
+    def _restart_servers_if_key_changed(self, key_before: str | None):
         # Only on a change: a screen task running right now would lose its
-        # server in the middle of a call.
-        if self._mcp_registry is None or self._model.llm_config(self._user.id) == before:
+        # server in the middle of a call. The model does not matter to them -
+        # they look at images with VISION_MODEL.
+        if self._mcp_registry is None or self._model.get_api_key(self._user.id) == key_before:
             return
         task = asyncio.create_task(self._mcp_registry.stop_openrouter_servers(self._user.id))
         self._stop_tasks.add(task)

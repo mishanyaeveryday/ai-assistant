@@ -83,7 +83,7 @@ class FakeVision:
         return Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1])))
 
 
-MODEL = "someone/picked-in-settings"
+MODEL = "someone/vision-model-from-env"
 
 
 def find(target, answer, screen_access=None, sees_images=True):
@@ -91,7 +91,7 @@ def find(target, answer, screen_access=None, sees_images=True):
     with patch.object(screen_server.ImageGrab, "grab", return_value=Image.new("RGB", CAPTURE)) as grab, \
             patch.object(screen_server.pyautogui, "size", return_value=SCREEN), \
             patch.object(screen_server, "missing_screen_access", return_value=screen_access), \
-            patch.object(screen_server, "LLM_MODEL", MODEL), \
+            patch.object(screen_server, "VISION_MODEL", MODEL), \
             patch.object(screen_server, "_sees_images", AsyncMock(return_value=sees_images)), \
             patch.object(screen_server, "_llm", return_value=vision):
         result = asyncio.run(screen_server.find_on_screen(target))
@@ -103,7 +103,7 @@ def test_find_on_screen_answers_in_click_coordinates():
     result, vision = find("the Send button", BOX)
 
     assert result == "Found 'the Send button' at x=1058, y=147."
-    # The model picked in Settings looks at the screen too.
+    # VISION_MODEL looks, whatever model answers in the chat.
     assert vision.request["model"] == MODEL
     assert "the Send button" in vision.request["messages"][0]["content"][1]["text"]
     # Scaled down to the size clicks work in before it is sent.
@@ -134,7 +134,7 @@ def test_a_model_without_vision_is_not_sent_the_screen_but_warns():
     result, vision = find("the Send button", BOX, sees_images=False)
 
     assert f"'{MODEL}' cannot see images" in result
-    assert "Settings > Model" in result
+    assert "VISION_MODEL in .env" in result
     assert vision.request is None
 
 
@@ -160,7 +160,7 @@ def test_a_refused_image_gives_the_same_warning():
 def test_whether_the_model_sees_images_is_asked_once():
     fetch = AsyncMock(return_value=[
         {"id": MODEL, "architecture": {"input_modalities": ["text"]}}])
-    with patch.object(screen_server, "LLM_MODEL", MODEL), \
+    with patch.object(screen_server, "VISION_MODEL", MODEL), \
             patch.object(screen_server, "fetch_models", fetch), \
             patch.object(screen_server, "_sees_images_answer", None):
         assert asyncio.run(screen_server._sees_images()) is False

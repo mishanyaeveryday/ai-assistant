@@ -15,11 +15,11 @@ import openai
 import pyautogui
 from openai import AsyncOpenAI
 
-# The key and model are the user's from Settings > Model: the app starts this
-# server with them in its environment, which wins over .env.
+# The key is the user's from Settings > Model: the app starts this server with
+# it in its environment, which wins over .env. The model is VISION_MODEL.
 try:
     from config.settings import (SCREENSHOT_DIR, OPENROUTER_API_KEY,
-                                 OPENROUTER_BASE_URL, LLM_MODEL)
+                                 OPENROUTER_BASE_URL, VISION_MODEL)
     from core.openrouter import accepts_images, fetch_models
     from mcp_tools.permissions import missing_screen_access
     from mcp_tools.workspace import resolve_workspace
@@ -28,7 +28,7 @@ except ImportError:
     project_root = os.path.abspath(os.path.join(current_dir, "..", ".."))
     sys.path.insert(0, project_root)
     from config.settings import (SCREENSHOT_DIR, OPENROUTER_API_KEY,
-                                 OPENROUTER_BASE_URL, LLM_MODEL)
+                                 OPENROUTER_BASE_URL, VISION_MODEL)
     from core.openrouter import accepts_images, fetch_models
     from mcp_tools.permissions import missing_screen_access
     from mcp_tools.workspace import resolve_workspace
@@ -49,8 +49,8 @@ def _llm() -> AsyncOpenAI:
     return AsyncOpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL, max_retries=3)
 
 
-# Whether LLM_MODEL takes images, once OpenRouter has said so. The model is
-# fixed for the life of the process - the app restarts it on a change.
+# Whether VISION_MODEL takes images, once OpenRouter has said so. The model is
+# read from .env when the process starts and never changes after.
 _sees_images_answer: bool | None = None
 
 
@@ -61,18 +61,18 @@ async def _sees_images() -> bool | None:
     global _sees_images_answer
     if _sees_images_answer is None:
         try:
-            _sees_images_answer = accepts_images(await fetch_models(), LLM_MODEL)
+            _sees_images_answer = accepts_images(await fetch_models(), VISION_MODEL)
         except Exception as e:
-            print(f"Could not check whether {LLM_MODEL} takes images: {e}", file=sys.stderr)
+            print(f"Could not check whether {VISION_MODEL} takes images: {e}", file=sys.stderr)
     return _sees_images_answer
 
 
 def _no_vision_message() -> str:
     # Meant for the calling model, which passes it on as a warning.
-    return (f"The model '{LLM_MODEL}' cannot see images (it has no vision), so this tool "
-            "cannot work with it. Warn the user about this and tell them they can pick a model "
-            "that accepts images in Settings > Model. Do not retry, and do not guess what is "
-            "on the screen or where.")
+    return (f"The model '{VISION_MODEL}' cannot see images (it has no vision), so this tool "
+            "cannot work with it. Warn the user about this and tell them to set VISION_MODEL "
+            "in .env to a model that accepts images (google/gemini-3.8-flash by default). "
+            "Do not retry, and do not guess what is on the screen or where.")
 
 WORKSPACE = Path(SCREENSHOT_DIR).resolve()
 WORKSPACE.mkdir(parents=True, exist_ok=True)
@@ -252,7 +252,7 @@ def point_from_answer(answer: str, screen: tuple[int, int]) -> tuple[int, int]:
 
 
 async def _ask_vision(image_bytes: bytes, mime_type: str, prompt: str) -> str:
-    """One image and a question to LLM_MODEL; returns its answer. Raises
+    """One image and a question to VISION_MODEL; returns its answer. Raises
     RuntimeError with a message the calling model can act on."""
     # Checked before sending: a model without vision may not refuse the
     # image, but answer without having seen it.
@@ -261,7 +261,7 @@ async def _ask_vision(image_bytes: bytes, mime_type: str, prompt: str) -> str:
     data_url = f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode()}"
     try:
         response = await _llm().chat.completions.create(
-            model=LLM_MODEL,
+            model=VISION_MODEL,
             messages=[{"role": "user", "content": [
                 {"type": "image_url", "image_url": {"url": data_url}},
                 {"type": "text", "text": prompt},

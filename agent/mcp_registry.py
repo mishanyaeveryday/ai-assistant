@@ -16,8 +16,8 @@ class MCPRegistry:
         self._client = mcp_client
         self.user_id = user_id
         self._owners: dict = {}
-        # Gives the servers that call OpenRouter the user's key and model;
-        # without it they read .env.
+        # Gives the servers that call OpenRouter the user's key; without it
+        # they read .env.
         self._model_settings = model_settings
 
     def set_user(self, user_id: str | None):
@@ -66,18 +66,15 @@ class MCPRegistry:
 
     async def stop_openrouter_servers(self, user_id: str):
         """Shuts down this user's servers that call OpenRouter, after their
-        key or model changed: they were started with the old ones, and the
-        next call starts them again with the new."""
+        key changed: they were started with the old one, and the next call
+        starts them again with the new."""
         for server in self._service.get_user_servers(user_id):
             if uses_openrouter(server):
                 await self._client.disconnect(server.id)
 
     def _openrouter_env(self, user_id: str) -> dict:
-        model, api_key = self._model_settings.llm_config(user_id)
-        env = {"LLM_MODEL": model}
-        if api_key:
-            env["OPENROUTER_API_KEY"] = api_key
-        return env
+        api_key = self._model_settings.get_api_key(user_id)
+        return {"OPENROUTER_API_KEY": api_key} if api_key else {}
 
     def _spec_for(self, server) -> ConnectionSpec:
         # Secrets are decrypted here and go straight into the spec that starts

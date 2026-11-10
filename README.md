@@ -171,14 +171,16 @@ TAVILY_API_KEY=...
 # Opcjonalne — modele z OpenRouter
 LLM_MODEL=qwen/qwen3.8-flash
 LLM_FALLBACK_MODELS=
+VISION_MODEL=google/gemini-3.8-flash
 
 # Opcjonalne — nazwa lub tag obrazu Dockera dla sandboxa kodu (patrz „Kontener Docker”)
 DOCKER_CONTAINER=...
 ```
 
 - **OPENROUTER_API_KEY** — [OpenRouter](https://openrouter.ai/keys); jeden klucz daje dostęp do modeli wielu dostawców (Google, OpenAI, Anthropic i in.). Użytkownik, który wkleił własny klucz w **Ustawieniach → Model**, używa swojego; ten z `.env` jest dla pozostałych. Dotyczy to też narzędzi `read_image` i `find_on_screen`
-- **LLM_MODEL** — identyfikator modelu z [listy OpenRouter](https://openrouter.ai/models), który obsługuje narzędzia (tools); domyślnie `qwen/qwen3.8-flash`. Model wybrany w **Ustawieniach → Model** ma pierwszeństwo. Ten sam model ogląda obrazy i zrzuty ekranu (`read_image`, `find_on_screen`); jeśli nie przyjmuje obrazów, narzędzia nie wysyłają zapytania, a asystent ostrzega, że model nie ma vision
+- **LLM_MODEL** — identyfikator modelu z [listy OpenRouter](https://openrouter.ai/models), który obsługuje narzędzia (tools); domyślnie `qwen/qwen3.8-flash`. Model wybrany w **Ustawieniach → Model** ma pierwszeństwo
 - **LLM_FALLBACK_MODELS** — modele (oddzielone przecinkami), na które OpenRouter przełączy się, gdy `LLM_MODEL` zwróci błąd; domyślnie wyłączone
+- **VISION_MODEL** — model, który ogląda obrazy i zrzuty ekranu (`read_image`, `find_on_screen`), niezależnie od modelu czatu; domyślnie `google/gemini-3.8-flash` — inne modele nie trafiają w kliknięcia. Musi przyjmować obrazy; jeśli nie przyjmuje, narzędzia nie wysyłają zapytania, a asystent ostrzega, że model nie ma vision
 - **TAVILY_API_KEY** — [Tavily](https://tavily.com/) — zmienna jest wymagana przez `config/settings.py`; bez niej aplikacja nie wystartuje
 - **DOCKER_CONTAINER** — nazwa/tag zbudowanego obrazu Dockera, którego używa narzędzie MCP **`run_python_code`** (`mcp_tools/code_interpreter/server.py`) do uruchamiania kodu Python w sandboxie. Bez tej zmiennej narzędzie jest zarejestrowane w GUI, ale przy próbie użycia zwróci błąd — patrz **[Kontener Docker (sandbox kodu Python)](#kontener-docker-sandbox-kodu-python)**
 
