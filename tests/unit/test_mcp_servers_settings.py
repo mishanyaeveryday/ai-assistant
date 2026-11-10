@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import sys
 from types import SimpleNamespace
@@ -34,51 +35,113 @@ def service(tmp_path, secrets):
     return MCPServerService(mcp_server_db=db, secret_service=secrets)
 
 
-def stdio_form(**overrides):
-    form = {'name': 'github', 'transport': 'stdio',
-            'command': 'npx -y "@scope/server github"', 'env': '',
-            'url': '', 'headers': '', 'description': ''}
-    form.update(overrides)
-    return form
+GITHUB = {'command': 'npx', 'args': ['-y', '@scope/server github']}
+REMOTE = {'url': 'https://example.com/mcp'}
+# As GitHub's docs give it for VS Code, which asks for the token itself.
+VSCODE_GITHUB = {
+    'servers': {'github': {
+        'type': 'http', 'url': 'https://api.githubcopilot.com/mcp/',
+        'headers': {'Authorization': 'Bearer ${input:github_mcp_pat}'}}},
+    'inputs': [{'type': 'promptString', 'id': 'github_mcp_pat',
+                'description': 'GitHub Personal Access Token', 'password': True}],
+}
+
+
+def server_form(config=GITHUB, name='github'):
+    """What the add-server form emits. A dict is pasted as JSON, a string
+    exactly as typed."""
+    if not isinstance(config, str):
+        config = json.dumps(config, indent=2)
+    return {'name': name, 'config': config}
 
 
 # --- parse_server_form ---
 
-def test_parse_stdio_splits_command_and_reads_env():
-    server = parse_server_form(stdio_form(env="# comment\nGITHUB_TOKEN = abc=def\n\nDEBUG=1"))
+def test_parse_stdio_entry():
+    server = parse_server_form(server_form(
+        {**GITHUB, 'env': {'GITHUB_TOKEN': 'abc=def', 'DEBUG': '1'}}))
 
+    assert server == {
+        'name': 'github', 'transport': 'stdio', 'description': None,
+        'command': 'npx', 'args': ['-y', '@scope/server github'],
+        'env': {'GITHUB_TOKEN': 'abc=def', 'DEBUG': '1'},
+    }
+
+
+def test_parse_http_entry():
+    server = parse_server_form(server_form(
+        {'url': ' https://example.com/mcp ', 'headers': {'Authorization': 'Bearer x:y'},
+         'description': ' Remote tools '}, name='remote'))
+
+    assert server == {
+        'name': 'remote', 'transport': 'http', 'description': 'Remote tools',
+        'url': 'https://example.com/mcp', 'headers': {'Authorization': 'Bearer x:y'},
+    }
+
+
+@pytest.mark.parametrize("wrapper", ['mcpServers', 'servers'])
+def test_parse_takes_the_name_the_json_files_the_server_under(wrapper):
+    server = parse_server_form(server_form({wrapper: {'github': GITHUB}}, name=''))
+
+    assert server['name'] == 'github'
     assert server['command'] == 'npx'
-    assert server['args'] == ['-y', '@scope/server github']
-    assert server['env'] == {'GITHUB_TOKEN': 'abc=def', 'DEBUG': '1'}
-    assert server['description'] is None
 
 
-def test_parse_http_reads_headers():
-    server = parse_server_form(stdio_form(
-        transport='http', url=' https://example.com/mcp ',
-        headers='Authorization: Bearer x:y'))
+def test_parse_keeps_references_to_stored_secrets():
+    server = parse_server_form(server_form({**GITHUB, 'env': {'TOKEN': '${secret:shared}'}}))
 
-    assert server['url'] == 'https://example.com/mcp'
-    assert server['headers'] == {'Authorization': 'Bearer x:y'}
-    assert 'command' not in server
+    assert server['env'] == {'TOKEN': '${secret:shared}'}
 
 
-@pytest.mark.parametrize("overrides, message", [
-    ({'name': '  '}, "Name is required"),
-    ({'name': 'my server'}, "Name may only contain"),
-    ({'name': 'a.b'}, "Name may only contain"),
-    ({'command': '   '}, "Command is required"),
-    ({'command': 'npx "unclosed'}, "Command:"),
-    ({'env': 'NO_EQUALS_SIGN'}, "Environment"),
-    ({'env': '1BAD=x'}, "Environment"),
-    ({'env': 'A=1\nA=2'}, "set twice"),
-    ({'transport': 'http', 'url': 'example.com'}, "URL must start"),
-    ({'transport': 'http', 'url': 'https://x', 'headers': 'Bad Header: 1'}, "Headers"),
-    ({'transport': None}, "Choose the server type"),
+def test_parse_typed_name_wins_over_the_one_in_the_json():
+    server = parse_server_form(server_form({'mcpServers': {'gh': GITHUB}}, name='mine'))
+
+    assert server['name'] == 'mine'
+
+
+@pytest.mark.parametrize("entry, transport", [
+    ({**GITHUB, 'type': 'stdio'}, 'stdio'),
+    ({**REMOTE, 'type': 'http'}, 'http'),
+    ({**REMOTE, 'type': 'streamableHttp'}, 'http'),
 ])
-def test_parse_rejects_bad_input(overrides, message):
+def test_parse_accepts_a_matching_type(entry, transport):
+    assert parse_server_form(server_form(entry))['transport'] == transport
+
+
+@pytest.mark.parametrize("name, config, message", [
+    ('github', '  ', "Paste the server's JSON config"),
+    ('github', '{"command": "npx",}', r"JSON: .* \(line 1, column 19\)"),
+    ('github', '["npx"]', "must be an object"),
+    ('github', {}, 'needs a "command"'),
+    ('github', {'args': ['-y'], 'env': {}}, 'needs a "command"'),
+    ('', {'mcpServers': {'a': GITHUB, 'b': REMOTE}}, r"2 servers \(a, b\)"),
+    ('  ', GITHUB, "Name is required"),
+    ('my server', GITHUB, "Name may only contain"),
+    ('a.b', GITHUB, "Name may only contain"),
+    ('', {'my server': GITHUB}, 'The JSON names the server "my server" - type a Name'),
+    ('github', {**GITHUB, **REMOTE}, "not both"),
+    ('github', {'type': 'sse', 'url': 'https://x/sse'}, "SSE servers are not supported"),
+    ('github', {**REMOTE, 'type': 'websocket'}, 'Unknown "type"'),
+    ('github', {**REMOTE, 'type': ['http']}, 'Unknown "type"'),
+    ('github', {**GITHUB, 'type': 'http'}, 'does not fit a server with a "command"'),
+    ('github', {**GITHUB, 'cwd': '/tmp', 'timeout': 5}, 'local command: "cwd", "timeout"'),
+    ('github', {**REMOTE, 'env': {}}, 'remote server: "env"'),
+    ('github', {'command': '  '}, '"command" must be a non-empty string'),
+    ('github', {'command': 'npx', 'args': '-y x'}, '"args" must be a list'),
+    ('github', {'command': 'npx', 'args': ['-y', 1]}, '"args" must be a list'),
+    ('github', {**GITHUB, 'env': ['A=1']}, '"env" must be an object'),
+    ('github', {**GITHUB, 'env': {'1BAD': 'x'}}, '"env": "1BAD" is not a valid name'),
+    ('github', {**GITHUB, 'env': {'PORT': 3000}}, 'value of "PORT" must be a string'),
+    ('github', {'url': 'example.com'}, '"url" must start'),
+    ('github', {**REMOTE, 'headers': {'Bad Header': '1'}}, '"headers"'),
+    ('github', {**GITHUB, 'description': 5}, '"description" must be a string'),
+    ('', VSCODE_GITHUB, r'"\$\{input:github_mcp_pat\}" is a placeholder'),
+    ('github', {**GITHUB, 'args': ['${workspaceFolder}']}, "is a placeholder"),
+    ('github', {**GITHUB, 'env': {'TOKEN': '${env:TOKEN}'}}, "is a placeholder"),
+])
+def test_parse_rejects_bad_input(name, config, message):
     with pytest.raises(ValueError, match=message):
-        parse_server_form(stdio_form(**overrides))
+        parse_server_form(server_form(config, name=name))
 
 
 # --- MCPServerService: credentials go to the secrets table ---
@@ -146,6 +209,7 @@ class FakeView(QObject):
     delete_requested = Signal(str)
     enabled_changed = Signal(str, bool)
     check_requested = Signal(str)
+    auto_approve_changed = Signal(str, str, bool)
     opened = Signal()
 
     def __init__(self):
@@ -206,7 +270,7 @@ def test_add_checks_the_new_server(service):
     async def scenario():
         controller, view, _ = make_controller(service)
         with patch('agent.mcp_probe.probe', side_effect=ok_probe):
-            view.add_requested.emit(stdio_form())
+            view.add_requested.emit(server_form())
             assert view.row('github')['status'] == 'checking'
             await settle()
         return view
@@ -220,12 +284,29 @@ def test_add_checks_the_new_server(service):
     assert row['detail'] == 'npx -y @scope/server github'
 
 
+def test_add_stores_pasted_tokens_encrypted(service, secrets):
+    async def scenario():
+        controller, view, _ = make_controller(service)
+        with patch('agent.mcp_probe.probe', side_effect=ok_probe):
+            view.add_requested.emit(server_form(
+                {'mcpServers': {'github': {**GITHUB, 'env': {'GITHUB_TOKEN': 'ghp_secret'}}}},
+                name=''))
+            await settle()
+
+    asyncio.run(scenario())
+
+    server = service.get_server_by_name(USER_ID, 'github')
+    assert server.env == {'GITHUB_TOKEN': secret_ref('github.env.GITHUB_TOKEN')}
+    assert secrets.get_secret(USER_ID, 'github.env.GITHUB_TOKEN') == 'ghp_secret'
+    assert 'ghp_secret' not in str(service.mcp_server_db.get_server_by_id(server.id))
+
+
 def test_add_with_taken_name_reports_error(service):
     service.add_user_server(USER_ID, name='github', transport='stdio', command='npx')
 
     async def scenario():
         controller, view, _ = make_controller(service)
-        view.add_requested.emit(stdio_form())
+        view.add_requested.emit(server_form())
         return view
 
     view = asyncio.run(scenario())
@@ -237,12 +318,12 @@ def test_add_with_taken_name_reports_error(service):
 def test_add_with_invalid_form_reports_error(service):
     async def scenario():
         controller, view, _ = make_controller(service)
-        view.add_requested.emit(stdio_form(command=''))
+        view.add_requested.emit(server_form({'command': ''}))
         return view
 
     view = asyncio.run(scenario())
 
-    assert view.form_error == "Command is required."
+    assert view.form_error == '"command" must be a non-empty string.'
     assert service.get_user_servers(USER_ID) == []
 
 

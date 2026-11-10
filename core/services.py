@@ -1,6 +1,8 @@
 import bcrypt
 from datetime import datetime
-from config.settings import BUILTIN_MCP_SERVERS
+from pathlib import Path
+from config.settings import (BUILTIN_MCP_SERVERS, LLM_MODEL, OPENROUTER_API_KEY,
+                             OPENROUTER_SERVERS, SCREEN_CONTROL_SERVERS, WORKSPACE_DIR)
 from core.crypto import SecretBox, referenced_names, scrub, secret_ref, substitute
 from core.models import User, Chat, MessageHistory, MCPServer
 from db.database import User_DB, Chat_DB, MessageHistory_DB, MCPServer_DB, Secret_DB
@@ -67,6 +69,40 @@ class ChatService:
     def delete_chat(self, chat_id: str) -> bool:
         return self.chat_db.delete_chat(chat_id=chat_id)
 
+    def get_chat(self, chat_id: str) -> Chat | None:
+        row = self.chat_db.get_chat_by_id(chat_id=chat_id)
+        return Chat.from_db_row(row) if row else None
+
+    @staticmethod
+    def default_workspace() -> str:
+        return str(Path(WORKSPACE_DIR).expanduser().resolve())
+
+    def get_workspace(self, chat_id: str) -> str:
+        """The folder this chat's tools work in."""
+        chat = self.get_chat(chat_id)
+        if chat is not None and chat.workspace:
+            return chat.workspace
+        # The default is the app's own folder, so it is made on first use; a
+        # folder the user picked is never recreated.
+        default = self.default_workspace()
+        Path(default).mkdir(parents=True, exist_ok=True)
+        return default
+
+    def is_default_workspace(self, chat_id: str) -> bool:
+        chat = self.get_chat(chat_id)
+        return chat is None or not chat.workspace
+
+    def set_workspace(self, chat_id: str, folder: str | None) -> bool:
+        """Picks the folder the chat's tools work in; None goes back to the
+        default. The default itself is stored as None too, so the chat keeps
+        following WORKSPACE_DIR if that is changed later."""
+        if folder is not None:
+            path = Path(folder).expanduser().resolve()
+            if not path.is_dir():
+                raise ValueError(f"{path} is not a folder.")
+            folder = None if str(path) == self.default_workspace() else str(path)
+        return self.chat_db.set_workspace(chat_id=chat_id, workspace=folder)
+
 
 class SecretService:
     """Stores credentials encrypted, apart from the connections that use them.
@@ -105,11 +141,87 @@ class SecretService:
         return substitute(value, lambda name: self.get_secret(user_id, name))
 
 
+# The user's own OpenRouter key in the secrets table. No dot in it, so it
+# never collides with the secrets of a server (see server_secret_name).
+OPENROUTER_KEY_SECRET = "openrouter_api_key"
+
+
+class ModelSettingsService:
+    """The model the assistant answers with and the OpenRouter key it uses,
+    per user. A user who has set neither in Settings gets the ones from .env,
+    and the model then falls back to the app's default."""
+
+    KEY_FROM_USER = "user"
+    KEY_FROM_ENV = "env"
+
+    def __init__(self, user_db: User_DB, secret_service: SecretService):
+        self.user_db = user_db
+        self.secret_service = secret_service
+
+    @staticmethod
+    def default_model() -> str:
+        return LLM_MODEL
+
+    def get_model(self, user_id: str) -> str:
+        return self.user_db.get_llm_model(user_id) or self.default_model()
+
+    def set_model(self, user_id: str, model: str | None) -> bool:
+        """None goes back to the default. The default itself is stored as None
+        too, so the user keeps following LLM_MODEL if that is changed later."""
+        model = (model or "").strip() or None
+        if model == self.default_model():
+            model = None
+        return self.user_db.set_llm_model(user_id, model)
+
+    def has_own_key(self, user_id: str) -> bool:
+        # By name, so the key is not decrypted just to say it is there.
+        return OPENROUTER_KEY_SECRET in self.secret_service.list_names(user_id)
+
+    def set_api_key(self, user_id: str, key: str) -> None:
+        self.secret_service.set_secret(user_id, OPENROUTER_KEY_SECRET, key.strip())
+
+    def remove_api_key(self, user_id: str) -> bool:
+        return self.secret_service.delete_secret(user_id, OPENROUTER_KEY_SECRET)
+
+    def key_source(self, user_id: str) -> str | None:
+        """Where the key in use comes from: KEY_FROM_USER, KEY_FROM_ENV, or
+        None when there is none at all."""
+        if self.has_own_key(user_id):
+            return self.KEY_FROM_USER
+        return self.KEY_FROM_ENV if OPENROUTER_API_KEY else None
+
+    def get_api_key(self, user_id: str) -> str | None:
+        """The key this user's requests go out with."""
+        return (self.secret_service.get_secret(user_id, OPENROUTER_KEY_SECRET)
+                or OPENROUTER_API_KEY)
+
+    def llm_config(self, user_id: str) -> tuple[str, str | None]:
+        """The model and the key for this user's next prompt."""
+        return self.get_model(user_id), self.get_api_key(user_id)
+
+
 def server_secret_name(server_name: str, kind: str, key: str) -> str:
     """Name of the secret holding one env/header value of a server the user
     added. Server names cannot contain a dot, so these never collide between
     servers."""
     return f"{server_name}.{kind}.{key}"
+
+
+def is_screen_control(server: MCPServer) -> bool:
+    return server.is_builtin and server.name in SCREEN_CONTROL_SERVERS
+
+
+def uses_openrouter(server: MCPServer) -> bool:
+    """A built-in server that calls OpenRouter itself, and so is started with
+    the user's key."""
+    return server.is_builtin and server.name in OPENROUTER_SERVERS
+
+
+def needs_consent(server: MCPServer) -> bool:
+    """A screen-control server the user has not agreed to yet. Its tools are
+    not offered, whatever its on/off switch says - a database from before the
+    consent existed has these servers switched on."""
+    return is_screen_control(server) and not server.runs_without_asking
 
 
 class MCPServerService:
@@ -214,6 +326,39 @@ class MCPServerService:
     def set_server_enabled(self, server_id: str, enabled: bool) -> bool:
         return self.mcp_server_db.update_server(server_id, is_enabled=enabled)
 
+    def set_tool_auto_approved(self, server_id: str, tool_name: str, allowed: bool) -> bool:
+        """Lets one of this server's tools run without asking, or makes it
+        ask again. Kept on the server's row, so it is per user and goes away
+        with the server."""
+        server = self.get_server(server_id)
+        if server is None:
+            return False
+        names = set(server.auto_approved_tools)
+        if allowed:
+            names.add(tool_name)
+        else:
+            names.discard(tool_name)
+        return self.mcp_server_db.update_server(
+            server_id, auto_approved_tools=sorted(names))
+
+    def screen_control_servers(self, user_id: str) -> list[MCPServer]:
+        return [s for s in self.get_user_servers(user_id) if is_screen_control(s)]
+
+    def is_screen_control_allowed(self, user_id: str) -> bool:
+        servers = self.screen_control_servers(user_id)
+        return bool(servers) and all(s.runs_without_asking for s in servers)
+
+    def set_screen_control_allowed(self, user_id: str, allowed: bool) -> list[str]:
+        """Records the user's consent to screen control, or takes it back:
+        the screen-control servers are switched on with every tool running
+        without asking, or switched off. Returns their ids."""
+        server_ids = []
+        for server in self.screen_control_servers(user_id):
+            self.mcp_server_db.update_server(
+                server.id, runs_without_asking=allowed, is_enabled=allowed)
+            server_ids.append(server.id)
+        return server_ids
+
     def delete_server(self, server_id: str) -> bool:
         """Removes the server along with the secrets created for it."""
         server = self.get_server(server_id)
@@ -300,6 +445,8 @@ class MCPServerService:
         specs = []
         owners = {}
         for server in self.get_enabled_servers(user_id):
+            if needs_consent(server):
+                continue
             for spec in server.known_tools:
                 name = spec.get('name')
                 if not name or name in owners:

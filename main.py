@@ -1,14 +1,15 @@
 from db.database import Chat_DB, MessageHistory_DB, User_DB, MCPServer_DB, Secret_DB
 from core.models import User
-from core.services import AuthService, ChatService, MessageService, AIClientService, MCPServerService, SecretService
+from core.services import AuthService, ChatService, MessageService, AIClientService, MCPServerService, SecretService, ModelSettingsService
 from agent.mcp_registry import MCPRegistry
 
-from interface.gui.view import RegistrationPage, LoginPage, ChatPage, SettingsPage, AppWindow, MCPServersSection
-from interface.gui.controller import RegistrationController, LoginController, MainWindowController, ViewManager, MessageController, AIClientController, MCPServersController
+from interface.gui.view import RegistrationPage, LoginPage, ChatPage, SettingsPage, AppWindow, MCPServersSection, ScreenControlSection, ModelSection
+from interface.gui.controller import RegistrationController, LoginController, MainWindowController, ViewManager, MessageController, AIClientController, MCPServersController, ModelSettingsController
 
 import sys
 import os
 from PySide6.QtWidgets import QApplication, QMainWindow, QLabel
+from PySide6.QtCore import QDir
 from agent.mcp_client import MCPClient, IDLE_SWEEP_SECONDS
 
 from qasync import QEventLoop, asyncSlot
@@ -52,6 +53,8 @@ async def main():
     secret_model = SecretService(secret_db=secret_db_instance)
     mcp_server_model = MCPServerService(
         mcp_server_db=mcp_server_db_instance, secret_service=secret_model)
+    model_settings_model = ModelSettingsService(
+        user_db=user_db_instance, secret_service=secret_model)
 
     # 3. Create Views
     app_window = AppWindow()
@@ -59,8 +62,12 @@ async def main():
     registration_view = RegistrationPage()
     login_view = LoginPage()
     settings_view = SettingsPage()
+    model_view = ModelSection()
+    settings_view.add_section(model_view)
     mcp_servers_view = MCPServersSection()
     settings_view.add_section(mcp_servers_view)
+    screen_control_view = ScreenControlSection()
+    settings_view.add_section(screen_control_view)
 
     view_manager = ViewManager(
         app_window=app_window,
@@ -74,7 +81,8 @@ async def main():
     # time the model calls one of its tools, and goes down again once it has
     # been idle for a while.
     mcp_client = MCPClient()
-    mcp_registry = MCPRegistry(mcp_server_model, mcp_client)
+    mcp_registry = MCPRegistry(mcp_server_model, mcp_client,
+                               model_settings=model_settings_model)
     idle_sweep_task = asyncio.create_task(sweep_idle_mcp_servers(mcp_client))
 
     # 5. Controllers
@@ -83,19 +91,25 @@ async def main():
     login_controller = LoginController(model=auth_model, view=login_view)
     message_controller = MessageController(model=message_model, view=main_view)
     ai_controller = AIClientController(
-        model=ai_model, view=main_view, mcp_registry=mcp_registry)
+        model=ai_model, view=main_view, mcp_registry=mcp_registry,
+        chat_model=chat_model, model_settings=model_settings_model)
 
     main_window_controller = None
     mcp_servers_controller = None
+    model_settings_controller = None
 
     def on_login_success(user: User):
-        nonlocal main_window_controller, mcp_servers_controller
+        nonlocal main_window_controller, mcp_servers_controller, model_settings_controller
         if main_window_controller is not None:
             main_window_controller.disconnect_view()
         # Also cancels checks still running from a previous login - they are
         # for the wrong user.
         if mcp_servers_controller is not None:
             mcp_servers_controller.disconnect_view()
+        if model_settings_controller is not None:
+            model_settings_controller.disconnect_view()
+        # Prompts from now on use this user's model and key.
+        ai_controller.set_user(user.id)
 
         # Backfills the built-in servers for this user; a no-op once they are
         # already recorded.
@@ -112,6 +126,9 @@ async def main():
         main_window_controller.update_chat_list_in_view()
         mcp_servers_controller = MCPServersController(
             user=user, model=mcp_server_model, view=mcp_servers_view,
+            mcp_registry=mcp_registry, screen_view=screen_control_view)
+        model_settings_controller = ModelSettingsController(
+            user=user, model=model_settings_model, view=model_view,
             mcp_registry=mcp_registry)
         view_manager.show_main_window()
 
@@ -131,6 +148,9 @@ if __name__ == '__main__':
 
     style_path = os.path.join(os.path.dirname(
         __file__), "interface", "gui", "style.qss")
+    # The stylesheet names its images as icons:<file>, so they are found
+    # wherever the app is started from.
+    QDir.addSearchPath("icons", os.path.join(os.path.dirname(style_path), "icons"))
     with open(style_path, encoding="utf-8") as f:
         app.setStyleSheet(f.read())
 

@@ -49,8 +49,8 @@ class LLMClient:
     def __init__(self, llm_model, api_key, base_url, fallback_models=()):
         if not api_key:
             raise RuntimeError(
-                "OPENROUTER_API_KEY is not set - add it to .env "
-                "(get a key at https://openrouter.ai/keys)")
+                "There is no OpenRouter key - add yours in Settings > Model, or "
+                "OPENROUTER_API_KEY to .env (get a key at https://openrouter.ai/keys)")
         self.llm_model = llm_model
         self.fallback_models = list(fallback_models)
         # The retries are done in generate(), which tells a used-up quota from

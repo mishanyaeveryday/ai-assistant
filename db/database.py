@@ -10,7 +10,7 @@ MCP_SERVER_COLUMNS = frozenset({
     'id', 'user_id', 'name', 'transport', 'command', 'args', 'env',
     'url', 'headers', 'description', 'is_builtin', 'is_enabled', 'created_at',
     'last_status', 'last_error_code', 'last_error', 'last_checked_at',
-    'known_tools',
+    'known_tools', 'auto_approved_tools', 'runs_without_asking',
 })
 # Columns added after the table first shipped; create_table backfills them so
 # a database made by an earlier run keeps working.
@@ -20,9 +20,12 @@ MCP_SERVER_ADDED_COLUMNS = (
     ('last_error_code', 'TEXT'),
     ('last_error', 'TEXT'),
     ('last_checked_at', 'TEXT'),
+    ('auto_approved_tools', 'TEXT'),
+    ('runs_without_asking', 'INTEGER DEFAULT 0'),
 )
 MCP_SERVER_EDITABLE_COLUMNS = MCP_SERVER_COLUMNS - {'id', 'user_id', 'created_at'}
-MCP_SERVER_JSON_COLUMNS = frozenset({'args', 'env', 'headers', 'known_tools'})
+MCP_SERVER_JSON_COLUMNS = frozenset({'args', 'env', 'headers', 'known_tools',
+                                     'auto_approved_tools'})
 MCP_SERVER_TRANSPORTS = frozenset({'stdio', 'http'})
 
 
@@ -52,8 +55,17 @@ class User_DB:
                         last_active TEXT,
                         language TEXT DEFAULT "eng",
                         history_enabled INTEGER,
-                        is_active INTEGER
+                        is_active INTEGER,
+                        llm_model TEXT
             )""")
+
+            # Added after the table first shipped. NULL means the default
+            # LLM_MODEL, so changing that in .env moves every user who never
+            # picked a model of their own.
+            existing = {row[1] for row in cursor.execute('PRAGMA table_info(users)')}
+            if 'llm_model' not in existing:
+                cursor.execute('ALTER TABLE users ADD COLUMN llm_model TEXT')
+
             conn.commit()
 
     def add_user(self, username, email, password):
@@ -105,6 +117,23 @@ class User_DB:
             result = cursor.fetchone()
             return dict(result) if result else None
 
+    def get_llm_model(self, user_id):
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT llm_model FROM users WHERE id = ?', (user_id,))
+            row = cursor.fetchone()
+        return row[0] if row else None
+
+    def set_llm_model(self, user_id, llm_model):
+        """None puts the user back on the default model."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                'UPDATE users SET llm_model = ? WHERE id = ?', (llm_model, user_id))
+            updated = cursor.rowcount
+            conn.commit()
+        return updated > 0
+
 
 class Chat_DB:
     def __init__(self, db_name='ai-assistent.sqlite3'):
@@ -121,15 +150,43 @@ class Chat_DB:
     def create_table(self):
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            # workspace: the folder this chat's tools work in. NULL means the
+            # default WORKSPACE_DIR, so moving that in .env moves every chat
+            # that never picked its own.
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS chats (
                     id TEXT PRIMARY KEY,
                     title TEXT,
                     user_id TEXT,
-                    created_at TEXT
+                    created_at TEXT,
+                    workspace TEXT
                 )
             """)
+
+            # Added after the table first shipped.
+            existing = {row[1] for row in cursor.execute('PRAGMA table_info(chats)')}
+            if 'workspace' not in existing:
+                cursor.execute('ALTER TABLE chats ADD COLUMN workspace TEXT')
+
             conn.commit()
+
+    def get_chat_by_id(self, chat_id):
+        with self._get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM chats WHERE id = ?', (chat_id,))
+            result = cursor.fetchone()
+            return dict(result) if result else None
+
+    def set_workspace(self, chat_id, workspace):
+        """None puts the chat back on the default folder."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                'UPDATE chats SET workspace = ? WHERE id = ?', (workspace, chat_id))
+            updated = cursor.rowcount
+            conn.commit()
+        return updated > 0
 
     def get_all_chats_by_user_id(self, id):
         with self._get_connection() as conn:
@@ -357,6 +414,8 @@ class MCPServer_DB:
                     is_enabled INTEGER DEFAULT 1,
                     created_at TEXT,
                     known_tools TEXT,
+                    auto_approved_tools TEXT,
+                    runs_without_asking INTEGER DEFAULT 0,
                     last_status TEXT,
                     last_error_code TEXT,
                     last_error TEXT,
@@ -467,7 +526,7 @@ class MCPServer_DB:
             updates.append(f"{column} = ?")
             if column in MCP_SERVER_JSON_COLUMNS and value is not None:
                 value = json.dumps(value)
-            elif column in ('is_builtin', 'is_enabled') and value is not None:
+            elif column in ('is_builtin', 'is_enabled', 'runs_without_asking') and value is not None:
                 value = int(value)
             values.append(value)
         values.append(server_id)

@@ -6,8 +6,10 @@ Desktopowa aplikacja z graficznym interfejsem (PySide6), umożliwiająca rozmow�
 
 - **Rejestracja i logowanie** — konta użytkowników, hasła hashowane (bcrypt)
 - **Wiele czatów** — tworzenie czatów, przełączanie między nimi, historia wiadomości
-- **Asystent AI** — odpowiedzi generowane przez dowolny model z [OpenRouter](https://openrouter.ai/models) (domyślnie Gemini Flash), z pamięcią kontekstu w obrębie czatu
+- **Asystent AI** — odpowiedzi generowane przez dowolny model z [OpenRouter](https://openrouter.ai/models) (domyślnie `qwen/qwen3.8-flash`), z pamięcią kontekstu w obrębie czatu. W **Ustawieniach → Model** każdy użytkownik może wybrać model i wkleić własny klucz OpenRouter (przechowywany zaszyfrowany); bez nich używane są `LLM_MODEL` i `OPENROUTER_API_KEY` z `.env`
 - **Narzędzia MCP** — wyszukiwanie w internecie (Tavily), operacje na plikach, terminal, zrzuty ekranu, sterowanie myszą/klawiaturą oraz **sandbox kodu Python w Dockerze** — wszystko przez serwery MCP
+- **Potwierdzanie narzędzi** — narzędzia działające na komputerze (zapis/usuwanie plików, terminal, kod Python) oraz wszystkie narzędzia serwerów dodanych przez użytkownika pytają o zgodę w czacie. W **Ustawieniach → MCP servers → Tools** każdy użytkownik może pozwolić wybranym narzędziom działać bez pytania
+- **Sterowanie ekranem** — zrzuty ekranu, mysz i klawiatura są domyślnie wyłączone. Włącza je zgoda w **Ustawieniach → Screen control**: te kroki nie mogą pytać o każdy z osobna (karta w czacie zabrałaby fokus aplikacji, w której asystent pracuje), więc po zgodzie działają bez pytania. Przerwanie: **Stop** w czacie albo kursor myszy w rogu ekranu — wtedy mysz i klawiatura pozostają zablokowane, dopóki nie odznaczysz i ponownie nie zaznaczysz zgody. macOS wymaga też uprawnień **Accessibility** i **Screen Recording** dla aplikacji, z której uruchamiasz asystenta
 - **Baza SQLite** — użytkownicy, czaty i historia wiadomości przechowywane lokalnie
 
 ## Wymagania
@@ -69,7 +71,7 @@ Otwórz **`.env`** w edytorze i ustaw przynajmniej:
 
 | Zmienna            | Opis                                                |
 |--------------------|-----------------------------------------------------|
-| `OPENROUTER_API_KEY` | klucz z [OpenRouter](https://openrouter.ai/keys); modele płatne wymagają doładowania kredytów |
+| `OPENROUTER_API_KEY` | klucz z [OpenRouter](https://openrouter.ai/keys); modele płatne wymagają doładowania kredytów. Można go też podać w aplikacji, w **Ustawieniach → Model** |
 | `TAVILY_API_KEY`   | klucz z [Tavily](https://tavily.com/) — **wymagany**, inaczej `config/settings.py` rzuci `ValueError` przy starcie |
 
 `DOCKER_CONTAINER` zostaw puste lub uzupełnij dopiero po zbudowaniu obrazu Dockera — patrz **[Kontener Docker (sandbox kodu Python)](#kontener-docker-sandbox-kodu-python)** niżej w README.
@@ -167,7 +169,7 @@ OPENROUTER_API_KEY=...
 TAVILY_API_KEY=...
 
 # Opcjonalne — modele z OpenRouter
-LLM_MODEL=google/gemini-3.8-flash
+LLM_MODEL=qwen/qwen3.8-flash
 LLM_FALLBACK_MODELS=
 VISION_MODEL=google/gemini-3.8-flash
 
@@ -175,10 +177,10 @@ VISION_MODEL=google/gemini-3.8-flash
 DOCKER_CONTAINER=...
 ```
 
-- **OPENROUTER_API_KEY** — [OpenRouter](https://openrouter.ai/keys); jeden klucz daje dostęp do modeli wielu dostawców (Google, OpenAI, Anthropic i in.)
-- **LLM_MODEL** — identyfikator modelu z [listy OpenRouter](https://openrouter.ai/models), który obsługuje narzędzia (tools); domyślnie `google/gemini-3.8-flash`
+- **OPENROUTER_API_KEY** — [OpenRouter](https://openrouter.ai/keys); jeden klucz daje dostęp do modeli wielu dostawców (Google, OpenAI, Anthropic i in.). Użytkownik, który wkleił własny klucz w **Ustawieniach → Model**, używa swojego; ten z `.env` jest dla pozostałych. Dotyczy to też narzędzi `read_image` i `find_on_screen`
+- **LLM_MODEL** — identyfikator modelu z [listy OpenRouter](https://openrouter.ai/models), który obsługuje narzędzia (tools); domyślnie `qwen/qwen3.8-flash`. Model wybrany w **Ustawieniach → Model** ma pierwszeństwo
 - **LLM_FALLBACK_MODELS** — modele (oddzielone przecinkami), na które OpenRouter przełączy się, gdy `LLM_MODEL` zwróci błąd; domyślnie wyłączone
-- **VISION_MODEL** — model, który ogląda obrazy i zrzuty ekranu (`read_image`); musi obsługiwać obrazy na wejściu
+- **VISION_MODEL** — model, który ogląda obrazy i zrzuty ekranu (`read_image`, `find_on_screen`), niezależnie od modelu czatu; domyślnie `google/gemini-3.8-flash` — inne modele nie trafiają w kliknięcia. Musi przyjmować obrazy; jeśli nie przyjmuje, narzędzia nie wysyłają zapytania, a asystent ostrzega, że model nie ma vision
 - **TAVILY_API_KEY** — [Tavily](https://tavily.com/) — zmienna jest wymagana przez `config/settings.py`; bez niej aplikacja nie wystartuje
 - **DOCKER_CONTAINER** — nazwa/tag zbudowanego obrazu Dockera, którego używa narzędzie MCP **`run_python_code`** (`mcp_tools/code_interpreter/server.py`) do uruchamiania kodu Python w sandboxie. Bez tej zmiennej narzędzie jest zarejestrowane w GUI, ale przy próbie użycia zwróci błąd — patrz **[Kontener Docker (sandbox kodu Python)](#kontener-docker-sandbox-kodu-python)**
 
@@ -232,7 +234,17 @@ Za każdym wywołaniem `run_python_code`:
 1. Kod dostarczony przez asystenta jest zapisywany do **tymczasowego katalogu** (`tempfile.TemporaryDirectory`), tworzonego na czas jednego uruchomienia.
 2. Ten katalog jest montowany do kontenera jako `/sandbox`, a kontener uruchamia `python /sandbox/main.py`.
 3. Po zakończeniu wykonania kontener jest usuwany (`remove=True`), a tymczasowy katalog na hoście jest kasowany automatycznie po wyjściu z bloku `with` — **sam kod nie zostaje zapisany nigdzie na stałe w repo ani na dysku**.
-4. Dodatkowo katalog z **`WORKSPACE_DIR`** (patrz zmienna w `.env`, domyślnie `~/ai-assistant-workspace`) jest montowany do kontenera jako `/workspace`. Jeśli kod ma wygenerować plik, który ma **przetrwać** po zakończeniu (raport, wykres, wygenerowane dane), powinien zapisać go pod ścieżką `/workspace/...` wewnątrz kontenera — wtedy plik ląduje trwale w `WORKSPACE_DIR` na hoście. Wszystko zapisane gdzie indziej (np. w bieżącym katalogu `/sandbox`) jest traktowane jako dane tymczasowe i znika razem z kontenerem.
+4. Dodatkowo folder roboczy czatu (patrz **[Folder roboczy czatu](#folder-roboczy-czatu-workspace)**) jest montowany do kontenera jako `/workspace`. Jeśli kod ma wygenerować plik, który ma **przetrwać** po zakończeniu (raport, wykres, wygenerowane dane), powinien zapisać go pod ścieżką `/workspace/...` wewnątrz kontenera — wtedy plik ląduje trwale w tym folderze na hoście. Wszystko zapisane gdzie indziej (np. w bieżącym katalogu `/sandbox`) jest traktowane jako dane tymczasowe i znika razem z kontenerem. Innych folderów hosta sandbox nie widzi.
+
+#### Folder roboczy czatu (workspace)
+
+Każdy czat ma swój folder roboczy — pokazany nad wiadomościami, zmieniany przyciskiem **Change…** (powrót: **Use default**). Domyślnie jest to **`WORKSPACE_DIR`** z `.env` (`~/ai-assistant-workspace`). W tym folderze:
+
+- narzędzia plikowe rozwiązują ścieżki względne (ścieżki absolutne i `~` nadal działają wszędzie),
+- `terminal_command` uruchamia polecenia,
+- `run_python_code` montuje go jako `/workspace`.
+
+Model dostaje w prompcie ścieżkę folderu i listę jego najwyższego poziomu (same nazwy, bez zawartości plików). Folder trafia do serwerów MCP jako *root* protokołu MCP, więc serwery dodane przez użytkownika, które obsługują roots (np. oficjalny serwer filesystem), też pracują w folderze czatu.
 
 Uwaga: to inny mechanizm niż starszy `tools/code_interpreter.py` / `DockerCodeInterpreter`, który zapisywał wykonywany skrypt na stałe do katalogu `tools/files/` na hoście. `tools/code_interpreter.py` jest zachowany w repo (ma własne testy), ale **nie jest** podpięty do `main.py` / GUI — aktualnym, używanym w aplikacji narzędziem jest `mcp_tools/code_interpreter/server.py`.
 
@@ -267,7 +279,8 @@ ai-assistant/
 │   └── gui/                # PySide6: okna, kontrolery, worker AI
 ├── mcp_tools/
 │   ├── web_search/          # serwer MCP z narzędziem Tavily
-│   ├── filesystem_command/  # odczyt/zapis plików w WORKSPACE_DIR
+│   ├── workspace.py         # folder roboczy czatu (MCP roots) dla serwerów
+│   ├── filesystem_command/  # odczyt/zapis plików w folderze roboczym czatu
 │   ├── terminal_command/    # wykonywanie poleceń shell
 │   ├── screenshot_command/  # zrzuty ekranu
 │   ├── input_control/       # sterowanie myszą/klawiaturą

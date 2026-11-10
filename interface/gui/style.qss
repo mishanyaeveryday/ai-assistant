@@ -139,6 +139,126 @@ QPushButton#chat_delete_button:pressed {
     color: #b71c1c;
 }
 
+/* Shown next to the chat a task is running in */
+QLabel#chat_busy_dot {
+    color: #3d5afe;
+    font-size: 10px;
+    padding: 0px 2px;
+}
+
+/* --- Message box under the chat: looks like the other inputs --- */
+QPlainTextEdit#prompt_input {
+    border: 1px solid #dcdfe6;
+    border-radius: 8px;
+    padding: 3px 6px;
+    background-color: #ffffff;
+    selection-background-color: #a6b3ff;
+}
+
+QPlainTextEdit#prompt_input:focus {
+    border: 1px solid #3d5afe;
+}
+
+/* Stop takes Send's place while a task is running */
+QPushButton#stop_button {
+    background-color: #e53935;
+}
+
+QPushButton#stop_button:hover {
+    background-color: #d32f2f;
+}
+
+QPushButton#stop_button:pressed {
+    background-color: #b71c1c;
+}
+
+/* Folder of the open chat, just above the message box */
+QFrame#workspace_bar {
+    background-color: #ffffff;
+    border: 1px solid #e5e7ec;
+    border-radius: 8px;
+}
+
+QLabel#workspace_path {
+    color: #4a5060;
+    font-size: 13px;
+}
+
+QPushButton#workspace_button {
+    background-color: #eceef4;
+    color: #4a5060;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 12px;
+}
+
+QPushButton#workspace_button:hover {
+    background-color: #dde0ea;
+    color: #1f2430;
+}
+
+QPushButton#workspace_button:pressed {
+    background-color: #cdd2e0;
+}
+
+QPushButton#workspace_button:disabled {
+    background-color: #eceef4;
+    color: #a9aeb9;
+}
+
+/* Lined up with the text of the chat cells */
+QLabel#thinking_text {
+    color: #8a8f98;
+    font-style: italic;
+    padding: 2px 10px;
+}
+
+/* --- Tool approval card in the chat --- */
+QFrame#approval_card {
+    background-color: #fffbeb;
+    border: 1px solid #f3dc8a;
+    border-radius: 8px;
+}
+
+QFrame#approval_card[decided="true"] {
+    background-color: #ffffff;
+    border: 1px solid #e5e7ec;
+}
+
+QWidget#approval_buttons {
+    background: transparent;
+}
+
+QPlainTextEdit#approval_details {
+    background-color: #ffffff;
+    border: 1px solid #efe3b8;
+    border-radius: 6px;
+    padding: 2px 4px;
+    font-family: Menlo, Consolas, monospace;
+    font-size: 12px;
+}
+
+QLabel#approval_summary {
+    color: #4a5060;
+    font-family: Menlo, Consolas, monospace;
+    font-size: 12px;
+}
+
+QLabel#approval_allowed {
+    color: #2e7d32;
+    font-weight: 600;
+}
+
+QLabel#approval_denied {
+    color: #c62828;
+    font-weight: 600;
+}
+
+QLabel#approval_stopped {
+    color: #8a8f98;
+    font-weight: 600;
+}
+
 /* --- Inputs --- */
 QLineEdit {
     border: 1px solid #dcdfe6;
@@ -152,43 +272,55 @@ QLineEdit:focus {
     border: 1px solid #3d5afe;
 }
 
+QComboBox {
+    border: 1px solid #dcdfe6;
+    border-radius: 8px;
+    padding: 8px;
+    background-color: #ffffff;
+    selection-background-color: #a6b3ff;
+}
+
+QComboBox:focus {
+    border: 1px solid #3d5afe;
+}
+
+/* The text field of an editable box - the box itself draws the border. */
+QComboBox QLineEdit {
+    border: none;
+    padding: 0;
+    background: transparent;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 28px;
+}
+
+QComboBox::down-arrow {
+    image: url(icons:chevron-down.svg);
+    width: 14px;
+    height: 14px;
+}
+
+QComboBox QAbstractItemView {
+    border: 1px solid #dcdfe6;
+    background-color: #ffffff;
+    selection-background-color: #e8ecff;
+    selection-color: #1f2330;
+}
+
 QPlainTextEdit#form_text {
     border: 1px solid #dcdfe6;
     border-radius: 8px;
     padding: 4px;
     background-color: #ffffff;
     selection-background-color: #a6b3ff;
+    font-family: Menlo, Consolas, monospace;
+    font-size: 12px;
 }
 
 QPlainTextEdit#form_text:focus {
     border: 1px solid #3d5afe;
-}
-
-/* Transparent, or it picks up the grey page background inside white cards.
-   The indicator is drawn here too: once the widget is styled, the platform
-   one can lose its outline and an unselected option becomes invisible. */
-QRadioButton {
-    background: transparent;
-    spacing: 6px;
-}
-
-QRadioButton::indicator {
-    width: 14px;
-    height: 14px;
-    border: 1px solid #c8ccd6;
-    border-radius: 8px;
-    background-color: #ffffff;
-}
-
-QRadioButton::indicator:hover {
-    border-color: #3d5afe;
-}
-
-QRadioButton::indicator:checked {
-    width: 6px;
-    height: 6px;
-    border: 5px solid #3d5afe;
-    border-radius: 8px;
 }
 
 /* --- Panels & Cards --- */
@@ -225,7 +357,77 @@ QLabel#server_name {
     font-weight: 600;
 }
 
+/* A server's tools, opened under its row */
+QFrame#tools_panel {
+    background-color: #f8f9fc;
+    border: 1px solid #e5e7ec;
+    border-radius: 8px;
+}
+
+QLabel#tool_name {
+    font-family: Menlo, Consolas, monospace;
+    font-size: 13px;
+}
+
 /* On/off switch of a server: green while it is on */
+/* Column headings of the tools panel, over a line like a table's */
+QFrame#tools_heading {
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid #e5e7ec;
+}
+
+QLabel#column_heading {
+    color: #8a8f98;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+/* Transparent, or it picks up the panel's grey. The indicator is drawn here
+   too: once the widget is styled, the platform one can lose its outline. */
+QCheckBox#auto_approve_check {
+    background: transparent;
+    spacing: 0px;
+}
+
+QCheckBox#consent_check {
+    background: transparent;
+    spacing: 8px;
+    font-weight: 600;
+}
+
+QCheckBox#auto_approve_check::indicator,
+QCheckBox#consent_check::indicator {
+    width: 16px;
+    height: 16px;
+    border: 1px solid #c8ccd6;
+    border-radius: 4px;
+    background-color: #ffffff;
+}
+
+QCheckBox#auto_approve_check::indicator:hover,
+QCheckBox#consent_check::indicator:hover {
+    border-color: #3d5afe;
+}
+
+QCheckBox#auto_approve_check::indicator:checked,
+QCheckBox#consent_check::indicator:checked {
+    border-color: #3d5afe;
+    background-color: #3d5afe;
+    image: url(icons:check.svg);
+}
+
+QCheckBox#auto_approve_check::indicator:disabled {
+    border-color: #dcdfe6;
+    background-color: #f0f1f4;
+}
+
+QCheckBox#auto_approve_check::indicator:checked:disabled,
+QCheckBox#consent_check::indicator:checked:disabled {
+    border-color: #b8c1f7;
+    background-color: #b8c1f7;
+}
+
 QPushButton#toggle_button {
     background-color: #eceef4;
     color: #4a5060;

@@ -1,5 +1,6 @@
 import json
 from datetime import datetime
+from pathlib import Path
 
 from config.settings import (LLM_FALLBACK_MODELS, LLM_MODEL, MAX_TOOL_ROUNDS, OPENROUTER_API_KEY,
                              OPENROUTER_BASE_URL)
@@ -24,6 +25,39 @@ def date_context(now: datetime) -> str:
         f"{now.year} unless the user asked about another one.")
 
 
+# How many entries of the workspace folder the model is shown up front; past
+# that it can still call list_dir.
+WORKSPACE_LISTING_LIMIT = 50
+
+
+def workspace_context(workspace: str) -> str:
+    """Where this chat's tools work, and what is there at the top - so "sum
+    up the report" can find the file without a listing first. File contents
+    are left out: the model reads what it needs."""
+    path = Path(workspace)
+    lines = [
+        f"Workspace folder of this chat: {path}",
+        "Relative paths in the file tools, the working directory of terminal commands and "
+        "/workspace in the Python sandbox all point to this folder. Other folders can still be "
+        "reached with absolute paths or ~, except from the Python sandbox, which only sees this one.",
+    ]
+    try:
+        entries = [p for p in path.iterdir() if not p.name.startswith(".")]
+    except OSError:
+        lines.append("The folder cannot be read right now - it may have been moved or deleted.")
+        return "\n".join(lines)
+
+    entries.sort(key=lambda p: p.name.lower())
+    shown = [p.name + ("/" if p.is_dir() else "") for p in entries[:WORKSPACE_LISTING_LIMIT]]
+    if not shown:
+        lines.append("The folder is empty.")
+    else:
+        more = len(entries) - len(shown)
+        lines.append("Its top level: " + ", ".join(shown)
+                     + (f" (and {more} more)" if more else ""))
+    return "\n".join(lines)
+
+
 class AIClient:
     def __init__(
         self,
@@ -31,11 +65,14 @@ class AIClient:
         mcp_registry,
         tools_approval_policy: ToolsApprovalPolicy | None = None,
         approve_tool: ApproveToolFn | None = None,
-        model=LLM_MODEL,
+        model: str | None = None,
+        workspace: str | None = None,
+        api_key: str | None = None,
     ):
+        # The user's choices from Settings when given, else the ones in .env.
         self.llm = LLMClient(
-            llm_model=model,
-            api_key=OPENROUTER_API_KEY,
+            llm_model=model or LLM_MODEL,
+            api_key=api_key or OPENROUTER_API_KEY,
             base_url=OPENROUTER_BASE_URL,
             fallback_models=LLM_FALLBACK_MODELS,
         )
@@ -46,9 +83,13 @@ class AIClient:
             approve_tool=approve_tool,
         )
         self.memory = memory
-        # Built per prompt (a client is made for each one), so the date is current.
-        self.system_prompt = date_context(datetime.now().astimezone()) + "\n\n" + str(
-            """You are an AI assistant that manages files, runs terminal commands, and searches the web on the user's computer using connected tools.
+        # Built per prompt (a client is made for each one), so the date and
+        # the workspace listing are current.
+        context = date_context(datetime.now().astimezone())
+        if workspace:
+            context += "\n\n" + workspace_context(workspace)
+        self.system_prompt = context + "\n\n" + str(
+            """You are an AI assistant that manages files, runs terminal commands, searches the web and operates apps on the user's computer using connected tools.
 
 Rules for calling tools:
 - Only call a tool when it is actually required to complete the user's request. If you can already answer from context or
@@ -61,7 +102,12 @@ ite_file, which overwrites it; use delete_text to remove part of a file rather t
 icit approval before they run. Only call them when you are confident the arguments are correct, since a bad or unnecessar
 y call still interrupts the user with a confirmation prompt.
 - If a tool call fails or returns an error, explain what went wrong instead of retrying blindly with the same or empty ar
-guments.""")
+guments.
+- To operate an app on screen: get each point from find_on_screen, then use click, type_text, press_keys or scroll, and
+ check the result with read_image (no filename) before the next step. Never estimate screen coordinates yourself. The
+ keyboard focus may have moved to another window, so pass the field's x and y to type_text and press_keys. If
+ find_on_screen and click are not available, screen control is off - tell the user they can allow it in Settings >
+ Screen control.""")
 
     async def thinking_loop(
         self,

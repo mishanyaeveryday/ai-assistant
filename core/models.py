@@ -14,7 +14,8 @@ def _decode_json(raw, fallback):
 
 class User:
     def __init__(self, id, username, email, password, type_of_subscription,
-                 os_type, created_at, last_active, language, history_enabled, is_active):
+                 os_type, created_at, last_active, language, history_enabled, is_active,
+                 llm_model=None):
         self.id = id
         self.username = username
         self.email = email
@@ -26,6 +27,8 @@ class User:
         self.language = language
         self.history_enabled = history_enabled
         self.is_active = is_active
+        # The model picked in Settings, or None for the default one.
+        self.llm_model = llm_model
 
     @classmethod
     def from_db_row(cls, row: dict):
@@ -40,16 +43,19 @@ class User:
             last_active=row.get('last_active'),
             language=row.get('language'),
             history_enabled=row.get('history_enabled'),
-            is_active=row.get('is_active')
+            is_active=row.get('is_active'),
+            llm_model=row.get('llm_model')
         )
 
 
 class Chat:
-    def __init__(self, id, title, user_id, created_at):
+    def __init__(self, id, title, user_id, created_at, workspace=None):
         self.id = id
         self.title = title
         self.user_id = user_id
         self.created_at = created_at
+        # The folder picked for this chat, or None for the default one.
+        self.workspace = workspace
 
     @classmethod
     def from_db_row(cls, row: dict):
@@ -57,7 +63,8 @@ class Chat:
             id=row['id'],
             title=row['title'],
             user_id=row['user_id'],
-            created_at=row['created_at']
+            created_at=row['created_at'],
+            workspace=row.get('workspace')
         )
 
 
@@ -75,7 +82,8 @@ class MCPServer:
     def __init__(self, id, user_id, name, transport, command, args, env,
                  url, headers, description, is_builtin, is_enabled, created_at,
                  last_status=None, last_error_code=None, last_error=None,
-                 last_checked_at=None, known_tools=None):
+                 last_checked_at=None, known_tools=None, auto_approved_tools=None,
+                 runs_without_asking=False):
         self.id = id
         self.user_id = user_id
         self.name = name
@@ -96,6 +104,14 @@ class MCPServer:
         # Tool definitions seen at the last successful probe, so the model can
         # be offered this server's tools without it being running.
         self.known_tools = known_tools or []
+        # Names of this server's tools the user lets run without asking.
+        self.auto_approved_tools = auto_approved_tools or []
+        # Every tool of this server runs without asking. Set only by the
+        # user's consent to screen control - see MCPServerService.
+        self.runs_without_asking = runs_without_asking
+
+    def allows_without_asking(self, tool_name: str) -> bool:
+        return self.runs_without_asking or tool_name in self.auto_approved_tools
 
     @property
     def is_broken(self) -> bool:
@@ -122,7 +138,9 @@ class MCPServer:
             last_error_code=row.get('last_error_code'),
             last_error=row.get('last_error'),
             last_checked_at=row.get('last_checked_at'),
-            known_tools=_decode_json(row.get('known_tools'), [])
+            known_tools=_decode_json(row.get('known_tools'), []),
+            auto_approved_tools=_decode_json(row.get('auto_approved_tools'), []),
+            runs_without_asking=bool(row.get('runs_without_asking')),
         )
 
 

@@ -1,19 +1,42 @@
 from PySide6.QtCore import Signal, QObject
 from core.models import User, MCPServer
-from interface.gui.view import RegistrationPage, LoginPage, ChatPage, SettingsPage, AppWindow, MCPServersSection
-from core.services import AuthService, ChatService, MessageService, AIClientService, MCPServerService
-from interface.gui.worker import AIWorker
+from interface.gui.view import RegistrationPage, LoginPage, ChatPage, SettingsPage, AppWindow, MCPServersSection, ScreenControlSection, ModelSection
+from core.services import AuthService, ChatService, MessageService, AIClientService, MCPServerService, ModelSettingsService, is_screen_control, needs_consent
+from core.openrouter import fetch_tool_models
+from interface.gui.worker import AIWorker, STOPPED_OUTPUT
 from interface.gui.mcp_tools_approval import HumanToolApproval
 from agent.tools_policy import ToolsApprovalPolicy
 import asyncio
+import json
 import re
-import shlex
 
 # Server names also prefix the names of their secrets, which may not contain
 # anything else - and a dot is what separates the parts of those names.
 _SERVER_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _HEADER_NAME_RE = re.compile(r"^[A-Za-z0-9-]+$")
+
+# What a pasted server entry may hold, by transport. Configs written for other
+# clients can carry more (cwd, timeout, ...); those are refused rather than
+# dropped, since a server started without them may not behave as expected.
+_ENTRY_KEYS = {
+    MCPServer.STDIO: {'type', 'command', 'args', 'env', 'description'},
+    MCPServer.HTTP: {'type', 'url', 'headers', 'description'},
+}
+# Values of "type" as different clients spell them.
+_TYPE_NAMES = {
+    'stdio': MCPServer.STDIO,
+    'http': MCPServer.HTTP,
+    'streamable-http': MCPServer.HTTP,
+    'streamableHttp': MCPServer.HTTP,
+}
+_NEEDS_COMMAND_OR_URL = ('The JSON needs a "command" (local server) '
+                         'or a "url" (remote server).')
+# Placeholders other clients fill in before starting a server - VS Code's
+# ${input:...} asks the user, ${env:...} and ${workspaceFolder} read its own
+# state. Nothing here fills them in, so one would reach the server as literal
+# text. ${secret:NAME} is this app's own reference and is left alone.
+_FOREIGN_PLACEHOLDER_RE = re.compile(r"\$\{(?!secret:)[^}]*\}")
 
 
 class ViewManager:
@@ -53,6 +76,10 @@ class ViewManager:
         self.app_window.show_page(self.settings_view)
 
     def handle_logout(self):
+        # The chat page outlives the login: the chat open on it would still be
+        # showing when the next user logs in. Their login refills the chat
+        # list, but nothing reopens the right-hand side.
+        self.main_view.clear_chat_view()
         self.app_window.show_page(self.login_view)
 
 
@@ -117,6 +144,8 @@ class MainWindowController(QObject):
 
         self._view.new_chat_requested.connect(self.handle_create_new_chat)
         self._view.chat_delete_requested.connect(self.handle_delete_chat)
+        self._view.chat_shown.connect(self.show_workspace)
+        self._view.workspace_change_requested.connect(self.handle_workspace_change)
 
     def disconnect_view(self):
         """A fresh controller is built on every login, so the previous one has
@@ -124,6 +153,8 @@ class MainWindowController(QObject):
         would handle each action twice."""
         self._view.new_chat_requested.disconnect(self.handle_create_new_chat)
         self._view.chat_delete_requested.disconnect(self.handle_delete_chat)
+        self._view.chat_shown.disconnect(self.show_workspace)
+        self._view.workspace_change_requested.disconnect(self.handle_workspace_change)
 
     def update_chat_list_in_view(self):
         chat_objects = self._model.get_all_user_chats(user_id=self._user.id)
@@ -146,6 +177,21 @@ class MainWindowController(QObject):
             self._view.clear_chat_view()
 
         self.update_chat_list_in_view()
+
+    def show_workspace(self, chat_id: str):
+        self._view.show_workspace(
+            chat_id,
+            self._model.get_workspace(chat_id),
+            self._model.is_default_workspace(chat_id))
+
+    def handle_workspace_change(self, chat_id: str, folder: str):
+        """An empty folder puts the chat back on the default one."""
+        try:
+            self._model.set_workspace(chat_id, folder or None)
+        except ValueError as e:
+            self._view.show_workspace_error(str(e))
+            return
+        self.show_workspace(chat_id)
 
 
 class MessageController(QObject):
@@ -170,110 +216,262 @@ class MessageController(QObject):
 
 
 class AIClientController(QObject):
-    def __init__(self, model: AIClientService, view: ChatPage, mcp_registry):
+    """Runs one prompt at a time. The task belongs to the chat it was sent
+    from and keeps running while other chats are opened: its answer goes to
+    that chat only, and its approval cards come back when it is reopened."""
+
+    def __init__(self, model: AIClientService, view: ChatPage, mcp_registry,
+                 chat_model: ChatService | None = None,
+                 model_settings: ModelSettingsService | None = None):
         super().__init__()
         self._model = model
         self._view = view
         self._mcp_registry = mcp_registry
-        self._tool_approval = HumanToolApproval(parent_widget=self._view)
+        # Looks up each chat's workspace folder; without it every task works
+        # in the default one.
+        self._chat_model = chat_model
+        # The model and key of the logged-in user, read on each prompt so a
+        # change in settings counts from the next one. Without it, or before a
+        # login, the ones in .env are used.
+        self._model_settings = model_settings
+        self._user_id: str | None = None
+        self._tool_approval = HumanToolApproval(view=self._view)
         self._approval_policy = ToolsApprovalPolicy()
+        # Kept so the task can be stopped; asyncio itself only holds a weak
+        # reference to it.
+        self._task: asyncio.Task | None = None
+        self._task_chat_id: str | None = None
         self._view.send_input.connect(self.handle_prompt)
+        self._view.stop_requested.connect(self.stop)
+        self._view.chat_shown.connect(self.handle_chat_shown)
+        self._view.chat_delete_requested.connect(self.handle_chat_deleted)
+        # A task left running would keep acting after logout - and against the
+        # next user's servers and secrets once they log in.
+        self._view.logout_requested.connect(self.stop)
+        self._view.logout_requested.connect(lambda: self.set_user(None))
+
+    @property
+    def is_running(self) -> bool:
+        return self._task is not None and not self._task.done()
+
+    def set_user(self, user_id: str | None):
+        """Whose model and key the prompts use - this controller outlives a
+        login, and the next user must not get the previous one's key."""
+        self._user_id = user_id
 
     def handle_prompt(self, chat_id, user_input):
-        self._view.set_input_enabled(False)
+        if self.is_running:
+            return
+        if self._model_settings is not None and self._user_id is not None:
+            llm_model, api_key = self._model_settings.llm_config(self._user_id)
+        else:
+            llm_model, api_key = None, None
+        self._task_chat_id = chat_id
+        self._view.set_busy_chat(chat_id)
 
         self.worker = AIWorker(
             self._model,
             chat_id,
             user_input,
             mcp_registry=self._mcp_registry,
-            approve_tool=self._tool_approval.approve,
+            approve_tool=self._tool_approval.for_chat(chat_id),
             tools_approval_policy=self._approval_policy,
+            workspace=(self._chat_model.get_workspace(chat_id)
+                       if self._chat_model is not None else None),
+            llm_model=llm_model,
+            api_key=api_key,
         )
 
-        self.worker.finished.connect(self.handle_ai_response)
-
-        self.worker.error.connect(self.handle_ai_error)
+        self.worker.finished.connect(
+            lambda response, cid=chat_id: self.handle_ai_response(cid, response))
+        self.worker.error.connect(
+            lambda message, cid=chat_id: self.handle_ai_error(cid, message))
+        self.worker.stopped.connect(
+            lambda cid=chat_id: self.handle_stopped(cid))
 
         self.worker.finished.connect(self.worker.deleteLater)
-        asyncio.create_task(self.worker.run())
+        self.worker.error.connect(self.worker.deleteLater)
+        self.worker.stopped.connect(self.worker.deleteLater)
+        self._task = asyncio.create_task(self.worker.run())
 
-    def handle_ai_response(self, response_dict):
-        self._view.set_input_enabled(True)
+    def stop(self):
+        """Stops the running task right where it is - waiting for the model,
+        for an approval, or in the middle of a tool call."""
+        if not self.is_running or self._task.cancelling():
+            return
+        self._task.cancel()
+
+    def handle_chat_shown(self, chat_id):
+        if chat_id == self._task_chat_id:
+            self._tool_approval.show_chat(chat_id)
+
+    def handle_chat_deleted(self, chat_id):
+        if chat_id == self._task_chat_id:
+            self.stop()
+
+    def _finish(self):
+        self._task = None
+        self._task_chat_id = None
+        self._tool_approval.clear()
+        self._view.set_busy_chat(None)
+
+    def _reply_in(self, chat_id, text):
+        # The user may have opened another chat meanwhile; the answer is
+        # saved with its own chat and shows up when that one is opened.
+        if self._view.current_chat_id == chat_id:
+            self._view.add_assistant_message(text)
+
+    def handle_ai_response(self, chat_id, response_dict):
+        self._finish()
 
         try:
 
             if response_dict and 'output' in response_dict:
                 assistant_output = response_dict['output']
-                self._view.add_assistant_message(assistant_output)
+                self._reply_in(chat_id, assistant_output)
             else:
-                self._view.add_assistant_message(
-                    "Sorry, I received an invalid response.")
+                self._reply_in(chat_id, "Sorry, I received an invalid response.")
         except Exception as e:
-            self.handle_ai_error(f"Error processing response: {e}")
+            self.handle_ai_error(chat_id, f"Error processing response: {e}")
 
-    def handle_ai_error(self, error_message):
-        self._view.set_input_enabled(True)
+    def handle_ai_error(self, chat_id, error_message):
+        self._finish()
 
-        self._view.add_assistant_message(
-            f"Sorry, an error occurred: {error_message}")
+        self._reply_in(chat_id, f"Sorry, an error occurred: {error_message}")
+
+    def handle_stopped(self, chat_id):
+        self._finish()
+        self._reply_in(chat_id, STOPPED_OUTPUT)
 
 
-def _parse_pairs(text: str, separator: str, key_re: re.Pattern, what: str) -> dict:
-    """Reads one `key<separator>value` pair per line. Blank lines and lines
-    starting with # are skipped, so a pasted snippet can keep its comments."""
-    pairs = {}
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith('#'):
-            continue
-        key, found, value = line.partition(separator)
-        key = key.strip()
-        if not found or not key_re.match(key):
+def _server_entry(data) -> tuple[str | None, dict]:
+    """Finds the one server in the pasted JSON, along with the name it is
+    filed under if it has one. Docs usually show a server inside
+    {"mcpServers": {"name": {...}}} - VS Code says "servers" - so both the
+    wrapper and the name level are optional."""
+    if not isinstance(data, dict):
+        raise ValueError("The JSON must be an object: { ... }.")
+    for wrapper in ('mcpServers', 'servers'):
+        if isinstance(data.get(wrapper), dict):
+            data = data[wrapper]
+            break
+    if 'command' in data or 'url' in data:
+        return None, data
+
+    servers = [key for key, value in data.items() if isinstance(value, dict)]
+    if len(servers) > 1:
+        raise ValueError(f"The JSON has {len(servers)} servers "
+                         f"({', '.join(servers)}) - add them one at a time.")
+    if len(servers) == 1 and len(data) == 1:
+        return servers[0], data[servers[0]]
+    raise ValueError(_NEEDS_COMMAND_OR_URL)
+
+
+def _strings(value):
+    """Every string inside a pasted value, however deeply nested."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, list):
+        for item in value:
+            yield from _strings(item)
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _strings(item)
+
+
+def _string_map(value, key_re: re.Pattern, what: str) -> dict:
+    """Checks an env or headers object. A value left unquoted is refused
+    rather than converted, so what gets stored is exactly what was pasted."""
+    if not isinstance(value, dict):
+        raise ValueError(f'{what} must be an object: {{"NAME": "value"}}.')
+    for key, item in value.items():
+        if not key_re.match(key):
+            raise ValueError(f'{what}: "{key}" is not a valid name.')
+        if not isinstance(item, str):
             raise ValueError(
-                f'{what}: "{line}" is not a valid "name{separator}value" line.')
-        if key in pairs:
-            raise ValueError(f'{what}: "{key}" is set twice.')
-        pairs[key] = value.strip()
-    return pairs
+                f'{what}: the value of "{key}" must be a string - put it in quotes.')
+    return dict(value)
 
 
 def parse_server_form(form: dict) -> dict:
-    """Turns what was typed into the add-server form into the arguments of
+    """Turns the add-server form - a name and the server's JSON config, in
+    the shape MCP servers document it - into the arguments of
     MCPServerService.add_user_server. Raises ValueError with a message meant
     for the user."""
-    name = form.get('name', '').strip()
+    text = form.get('config', '').strip()
+    if not text:
+        raise ValueError("Paste the server's JSON config.")
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"JSON: {e.msg} (line {e.lineno}, column {e.colno}).") from None
+    filed_name, entry = _server_entry(data)
+
+    typed_name = form.get('name', '').strip()
+    name = typed_name or (filed_name or '').strip()
     if not name:
         raise ValueError("Name is required.")
     if not _SERVER_NAME_RE.match(name):
+        if not typed_name:
+            raise ValueError(f'The JSON names the server "{name}" - type a Name '
+                             'using only letters, digits, _ and -.')
         raise ValueError("Name may only contain letters, digits, _ and -.")
 
+    if 'command' in entry and 'url' in entry:
+        raise ValueError('Give either "command" or "url", not both.')
+    if 'command' not in entry and 'url' not in entry:
+        raise ValueError(_NEEDS_COMMAND_OR_URL)
+    transport = MCPServer.HTTP if 'url' in entry else MCPServer.STDIO
+
+    kind = entry.get('type')
+    if kind == 'sse':
+        # The client only speaks streamable HTTP.
+        raise ValueError('SSE servers are not supported, only streamable HTTP - '
+                         'many servers offer it too, often at a URL ending in /mcp.')
+    if kind is not None and (not isinstance(kind, str) or kind not in _TYPE_NAMES):
+        raise ValueError(f'Unknown "type": {json.dumps(kind)}.')
+    if kind is not None and _TYPE_NAMES[kind] != transport:
+        given = 'url' if transport == MCPServer.HTTP else 'command'
+        raise ValueError(f'"type": "{kind}" does not fit a server with a "{given}".')
+
+    unsupported = sorted(set(entry) - _ENTRY_KEYS[transport])
+    if unsupported:
+        what = 'a remote server' if transport == MCPServer.HTTP else 'a local command'
+        raise ValueError(f"Not supported for {what}: "
+                         + ", ".join(f'"{key}"' for key in unsupported) + ".")
+    for text in _strings(entry):
+        placeholder = _FOREIGN_PLACEHOLDER_RE.search(text)
+        if placeholder:
+            raise ValueError(
+                f'"{placeholder.group()}" is a placeholder another app fills in - '
+                'put the actual value in its place.')
+
+    description = entry.get('description') or ''
+    if not isinstance(description, str):
+        raise ValueError('"description" must be a string.')
     server = {
         'name': name,
-        'transport': form.get('transport'),
-        'description': form.get('description', '').strip() or None,
+        'transport': transport,
+        'description': description.strip() or None,
     }
 
-    if server['transport'] == MCPServer.STDIO:
-        try:
-            parts = shlex.split(form.get('command', ''))
-        except ValueError as e:
-            raise ValueError(f"Command: {e}.") from None
-        if not parts:
-            raise ValueError("Command is required.")
-        server['command'] = parts[0]
-        server['args'] = parts[1:]
-        server['env'] = _parse_pairs(
-            form.get('env', ''), '=', _ENV_KEY_RE, "Environment")
-    elif server['transport'] == MCPServer.HTTP:
-        url = form.get('url', '').strip()
-        if not url.startswith(('http://', 'https://')):
-            raise ValueError("URL must start with http:// or https://.")
-        server['url'] = url
-        server['headers'] = _parse_pairs(
-            form.get('headers', ''), ':', _HEADER_NAME_RE, "Headers")
+    if transport == MCPServer.STDIO:
+        command = entry['command']
+        if not isinstance(command, str) or not command.strip():
+            raise ValueError('"command" must be a non-empty string.')
+        args = entry.get('args', [])
+        if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
+            raise ValueError('"args" must be a list of strings.')
+        server['command'] = command.strip()
+        server['args'] = args
+        server['env'] = _string_map(entry.get('env', {}), _ENV_KEY_RE, '"env"')
     else:
-        raise ValueError("Choose the server type.")
+        url = entry['url']
+        if not isinstance(url, str) or not url.strip().startswith(('http://', 'https://')):
+            raise ValueError('"url" must start with http:// or https://.')
+        server['url'] = url.strip()
+        server['headers'] = _string_map(
+            entry.get('headers', {}), _HEADER_NAME_RE, '"headers"')
 
     return server
 
@@ -282,14 +480,20 @@ class MCPServersController(QObject):
     """Drives the MCP servers section of settings. Built on every login, like
     MainWindowController, since everything it shows belongs to one user - and
     it also runs the connection checks, so the section can show which servers
-    are being checked right now."""
+    are being checked right now. It also drives the screen-control consent,
+    since what that does is switch two of those servers on or off."""
 
-    def __init__(self, user: User, model: MCPServerService, view: MCPServersSection, mcp_registry):
+    def __init__(self, user: User, model: MCPServerService, view: MCPServersSection, mcp_registry,
+                 screen_view: ScreenControlSection | None = None):
         super().__init__()
         self._user = user
         self._model = model
         self._view = view
+        self._screen_view = screen_view
         self._mcp_registry = mcp_registry
+        # Tells which tools ask before running unless the user allowed them -
+        # the same rule the chat applies.
+        self._approval_policy = ToolsApprovalPolicy()
         self._active = True
         self._checking: set[str] = set()
         # asyncio only holds weak references to tasks, so they are kept here.
@@ -301,6 +505,11 @@ class MCPServersController(QObject):
         self._view.delete_requested.connect(self.handle_delete)
         self._view.enabled_changed.connect(self.handle_enabled_changed)
         self._view.check_requested.connect(self.handle_check)
+        self._view.auto_approve_changed.connect(self.handle_auto_approve_changed)
+        if self._screen_view is not None:
+            self._screen_view.allowed_changed.connect(self.handle_screen_control_changed)
+            self._screen_view.check_requested.connect(self.handle_check)
+            self._screen_view.set_allowed(self._model.is_screen_control_allowed(self._user.id))
 
     def disconnect_view(self):
         """Lets go of the (long-lived) view before the next login builds a new
@@ -312,6 +521,10 @@ class MCPServersController(QObject):
         self._view.delete_requested.disconnect(self.handle_delete)
         self._view.enabled_changed.disconnect(self.handle_enabled_changed)
         self._view.check_requested.disconnect(self.handle_check)
+        self._view.auto_approve_changed.disconnect(self.handle_auto_approve_changed)
+        if self._screen_view is not None:
+            self._screen_view.allowed_changed.disconnect(self.handle_screen_control_changed)
+            self._screen_view.check_requested.disconnect(self.handle_check)
         for task in list(self._check_tasks):
             task.cancel()
 
@@ -319,9 +532,40 @@ class MCPServersController(QObject):
         if not self._active:
             return
         servers = self._model.get_user_servers(user_id=self._user.id)
-        self._view.show_servers([self._row_data(s) for s in servers])
+        _, owners = self._model.get_tool_catalogue(user_id=self._user.id)
+        rows = [self._row_data(s, owners) for s in servers]
+        if self._screen_view is None:
+            self._view.show_servers(rows)
+            return
+        # The screen-control servers are listed under their consent box
+        # instead of with the rest.
+        self._view.show_servers([row for row in rows if not row['screen_control']])
+        self._screen_view.show_servers([row for row in rows if row['screen_control']])
+        self._screen_view.set_allowed(self._model.is_screen_control_allowed(self._user.id))
 
-    def _row_data(self, server: MCPServer) -> dict:
+    def _tool_list(self, server: MCPServer, owners: dict) -> list[dict]:
+        screen_control = is_screen_control(server)
+        tools = []
+        for spec in server.known_tools:
+            name = spec.get('name')
+            if not name:
+                continue
+            owner = owners.get(name)
+            tools.append({
+                'name': name,
+                'description': (spec.get('description') or '').strip(),
+                'asks_by_default': self._approval_policy.requires_approval(
+                    name, is_builtin=server.is_builtin),
+                'auto_approved': server.allows_without_asking(name),
+                # Set for the whole server by the screen-control consent.
+                'locked': screen_control,
+                # The model only ever reaches the first server offering a
+                # name, so this one's setting would change nothing.
+                'shadowed_by': owner.name if owner is not None and owner.id != server.id else None,
+            })
+        return tools
+
+    def _row_data(self, server: MCPServer, owners: dict) -> dict:
         if server.transport == MCPServer.HTTP:
             target = server.url or ""
         else:
@@ -332,6 +576,8 @@ class MCPServersController(QObject):
 
         if server.id in self._checking:
             status = 'checking'
+        elif needs_consent(server):
+            status = 'needs_consent'
         elif server.is_broken:
             status = 'error'
         elif not server.is_enabled:
@@ -347,10 +593,13 @@ class MCPServersController(QObject):
             'transport': server.transport,
             'is_builtin': server.is_builtin,
             'is_enabled': server.is_enabled,
+            # Switched on and off by the screen-control consent, not here.
+            'screen_control': is_screen_control(server),
             'detail': server.description or target,
             'target': target,
             'status': status,
             'tools': len(server.known_tools),
+            'tool_list': self._tool_list(server, owners),
             'error_code': server.last_error_code,
             'error': server.last_error,
         }
@@ -389,6 +638,12 @@ class MCPServersController(QObject):
         self._model.delete_server(server_id)
         self.refresh()
 
+    def handle_auto_approve_changed(self, server_id: str, tool_name: str, allowed: bool):
+        """Takes effect on the tool's next call, in a task already running
+        too. A card already waiting in a chat still needs its answer."""
+        self._model.set_tool_auto_approved(server_id, tool_name, allowed)
+        self.refresh()
+
     def handle_enabled_changed(self, server_id: str, enabled: bool):
         if server_id in self._checking:
             self.refresh()
@@ -408,6 +663,24 @@ class MCPServersController(QObject):
             self._start_check(server_id)
         else:
             self.refresh()
+
+    def handle_screen_control_changed(self, allowed: bool):
+        server_ids = self._model.set_screen_control_allowed(self._user.id, allowed)
+        if not allowed:
+            # Left running, they would keep serving the calls of a task
+            # already under way.
+            for server_id in server_ids:
+                self._stop_server(server_id)
+            self.refresh()
+            return
+
+        for server_id in server_ids:
+            server = self._model.get_server(server_id)
+            if server is not None and (server.is_broken or server.last_status is None):
+                # Same as switching on any server: until a check succeeds,
+                # its cached tools may be stale or missing.
+                self._start_check(server_id)
+        self.refresh()
 
     def handle_check(self, server_id: str):
         self._start_check(server_id)
@@ -463,5 +736,119 @@ class MCPServersController(QObject):
 
     def _stop_server(self, server_id: str):
         task = asyncio.create_task(self._mcp_registry.stop_server(server_id))
+        self._stop_tasks.add(task)
+        task.add_done_callback(self._stop_tasks.discard)
+
+
+class ModelSettingsController(QObject):
+    """Drives the Model section of settings. Built on every login, like
+    MCPServersController, since the model and key it shows are one user's.
+    What is saved counts from the next prompt."""
+
+    def __init__(self, user: User, model: ModelSettingsService, view: ModelSection,
+                 mcp_registry=None, fetch_models=fetch_tool_models):
+        super().__init__()
+        self._user = user
+        self._model = model
+        self._view = view
+        # Restarts the servers that call OpenRouter when the key changes, so
+        # they pick up the new one.
+        self._mcp_registry = mcp_registry
+        self._fetch_models = fetch_models
+        self._active = True
+        # OpenRouter's tool-capable models, once loaded; None until then, or
+        # if loading failed - any id is accepted in that case.
+        self._models: list[str] | None = None
+        # asyncio only holds weak references to tasks, so they are kept here.
+        self._models_task: asyncio.Task | None = None
+        self._stop_tasks: set[asyncio.Task] = set()
+
+        self._view.opened.connect(self.refresh)
+        self._view.save_requested.connect(self.handle_save)
+        self._view.remove_key_requested.connect(self.handle_remove_key)
+
+    def disconnect_view(self):
+        """Lets go of the (long-lived) view before the next login builds a new
+        controller, so a Save is not handled twice."""
+        self._active = False
+        self._view.opened.disconnect(self.refresh)
+        self._view.save_requested.disconnect(self.handle_save)
+        self._view.remove_key_requested.disconnect(self.handle_remove_key)
+        if self._models_task is not None:
+            self._models_task.cancel()
+
+    def refresh(self):
+        if not self._active:
+            return
+        self._view.show_settings(
+            model=self._model.get_model(self._user.id),
+            default_model=self._model.default_model(),
+            key_source=self._model.key_source(self._user.id))
+        if self._models is None and self._models_task is None:
+            # Loaded when the section is first shown rather than at login; a
+            # failed attempt is tried again the next time it is.
+            self._models_task = asyncio.create_task(self._load_models())
+
+    async def _load_models(self):
+        try:
+            models = await self._fetch_models()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(f"[Model] Could not load OpenRouter's model list: {e}")
+            if self._active:
+                self._view.show_models_unavailable()
+            return
+        finally:
+            self._models_task = None
+        self._models = models
+        if self._active:
+            self._view.show_models(models)
+
+    def _check_model(self, model: str) -> str | None:
+        """Why this model id cannot be saved, or None if it can."""
+        if not model:
+            return "Pick a model."
+        if "/" not in model or any(c.isspace() for c in model):
+            return (f'"{model}" is not an OpenRouter model id - they look like '
+                    f'{self._model.default_model()}.')
+        # What is already in use stays allowed, even if OpenRouter no longer
+        # lists it: saving just a new key must not fail over the model.
+        if (self._models is not None and model not in self._models
+                and model not in (self._model.get_model(self._user.id),
+                                  self._model.default_model())):
+            return f'OpenRouter has no model "{model}" that can use tools - pick one from the list.'
+        return None
+
+    def handle_save(self, model: str, key: str):
+        model, key = model.strip(), key.strip()
+        error = self._check_model(model)
+        if error is None and any(c.isspace() for c in key):
+            error = "The key cannot contain spaces - copy it again from openrouter.ai/keys."
+        if error is not None:
+            self._view.show_error(error)
+            return
+
+        key_before = self._model.get_api_key(self._user.id)
+        self._model.set_model(self._user.id, model)
+        if key:
+            self._model.set_api_key(self._user.id, key)
+        self._restart_servers_if_key_changed(key_before)
+        self.refresh()
+        self._view.show_saved()
+
+    def handle_remove_key(self):
+        key_before = self._model.get_api_key(self._user.id)
+        self._model.remove_api_key(self._user.id)
+        self._restart_servers_if_key_changed(key_before)
+        self.refresh()
+
+    def _restart_servers_if_key_changed(self, key_before: str | None):
+        # Only on a change: a screen task running right now would lose its
+        # server in the middle of a call. The model does not matter to them -
+        # they look at images with VISION_MODEL.
+        if self._mcp_registry is None or self._model.get_api_key(self._user.id) == key_before:
+            return
+        task = asyncio.create_task(self._mcp_registry.stop_openrouter_servers(self._user.id))
         self._stop_tasks.add(task)
         task.add_done_callback(self._stop_tasks.discard)
